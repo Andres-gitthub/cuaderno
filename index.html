@@ -1338,7 +1338,7 @@ async function renameCurrent(){
 function normalizeProfile(p){
   const prof = p && Array.isArray(p.notebooks) ? p : defaultProfile();
   prof.prefs = prof.prefs || {};
-  prof.folders = Array.isArray(prof.folders) ? prof.folders : [];
+  prof.folders = Array.isArray(prof.folders) ? prof.folders.filter(f => f && typeof f.id === 'string' && typeof f.name === 'string') : [];
   return prof;
 }
 function folderById(id){ return id ? profile.folders.find(f => f.id === id) || null : null; }
@@ -1447,12 +1447,12 @@ async function folderActions(f){
   }
 }
 async function moveNotebookFlow(n){
-  const cur = folderOf(n);
+  const curF = folderOf(n);
   const v = await modal({ title: 'Mover «' + n.title + '»', body: (b, done) => {
     const l = document.createElement('div'); l.className = 'menu-list';
     const opt = (icon, label, id) => {
       const bt = menuBtn(icon, label, () => done({ to: id }));
-      bt.setAttribute('aria-pressed', String(cur === id)); l.append(bt);
+      bt.setAttribute('aria-pressed', String(curF === id)); l.append(bt);
     };
     opt(ICON.pages, 'Sin carpeta (biblioteca)', null);
     for(const f of [...profile.folders].sort((a, b) => a.name.localeCompare(b.name, 'es'))) opt(ICON.folder, f.name, f.id);

@@ -75,3 +75,8 @@ test('una copia con carpetas se restaura idéntica', async () => {
   assertEq(await idbSnapshot(), before);
   assertEq(folderOf(profile.notebooks[0]), profile.folders[0].id);
 });
+
+test('normalizeProfile descarta carpetas mal formadas', async () => {
+  const p = normalizeProfile({ v: 1, notebooks: [], prefs: {}, folders: [null, { id: 'a', name: 'A', created: 1 }, { id: 2, name: 'B' }, { id: 'c' }] });
+  assertEq(p.folders.map(f => f.id), ['a']);
+});
