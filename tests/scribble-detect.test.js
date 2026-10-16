@@ -9,7 +9,8 @@ test('la escritura y las líneas no son garabatos', async () => {
   assert(!isScribble(flat(cursiveM(100, 100, 8))), 'mmmmmmmm');
   assert(!isScribble(flat(densify([[100, 500], [700, 505]]))), 'subrayado');
   assert(!isScribble(flat(densify([[100, 100], [200, 200], [100, 300]]))), 'una sola vuelta');
-  assert(!isScribble(flat(zigzag(300, 300, 120, 30, 3))), 'solo 2 cambios de sentido');
+  assert(!isScribble(flat(zigzag(300, 300, 120, 30, 2))), 'solo 1 cambio de sentido');
+  assert(!isScribble(flat(densify([[100, 100], [140, 100], [100, 140], [140, 140]]))), 'una Z');
 });
 
 test('foco: trazos degenerados devuelven false sin lanzar', async () => {
@@ -39,5 +40,21 @@ test('scribbleTargets: borra la palabra cubierta y deja lo que solo cruza o est�
   const underline = penStroke(densify([[100, 330], [800, 330]]));
   const far = penStroke(densify([[300, 900], [400, 900]]));
   const ids = scribbleTargets(flat(zigzag(295, 300, 130, 30, 6)), letters.concat([underline, far]));
+  assertEq([...ids].sort(), letters.map(s => s.id).sort());
+});
+
+test('basta un garabato rápido de 3 pasadas', async () => {
+  assert(isScribble(flat(zigzag(300, 300, 120, 30, 3))), '3 pasadas');
+  assert(isScribble(flat(zigzag(300, 300, 120, 10, 3))), '3 pasadas planas');
+});
+
+test('cuentan las pasadas desiguales', async () => {
+  // vuelve solo un 28 % del ancho en la segunda pasada
+  assert(isScribble(flat(densify([[300, 300], [420, 304], [386, 308], [420, 312], [300, 316]]))), 'pasadas desiguales');
+});
+
+test('un garabato plano borra las letras que sobresalen por arriba y por abajo', async () => {
+  const letters = word(300, 300, 120, 5);          // letras de 20 de alto (y 300–320)
+  const ids = scribbleTargets(flat(zigzag(295, 306, 130, 8, 3)), letters);
   assertEq([...ids].sort(), letters.map(s => s.id).sort());
 });

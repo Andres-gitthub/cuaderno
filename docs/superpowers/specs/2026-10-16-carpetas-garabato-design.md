@@ -116,7 +116,7 @@ La escritura normal («mmm», «www», cursiva) avanza de forma monótona sobre 
 
 ### Qué se borra: `scribbleTargets(P, strokes)`
 
-- **Zona:** el contorno convexo de los puntos del garabato (monotone chain), ampliado `SCRIBBLE_PAD` unidades de página desde el centroide.
+- **Zona:** el contorno convexo de los puntos del garabato (monotone chain), más todo lo que esté a `SCRIBBLE_PAD` unidades de página o menos de su contorno (distancia real a los lados; v4 sustituye la ampliación radial desde el centroide, que casi no daba margen vertical a los garabatos planos).
 - Para cada trazo de `page.strokes`:
   - Descarte rápido si su `bb` no corta la caja de la zona.
   - Si no se descarta, se mide la **fracción de su longitud** dentro de la zona. Se recorre cada segmento de sus puntos, dividido en tramos de `≤ 4` unidades. Cada tramo cuenta con su longitud si su punto medio cae dentro, comprobado con `pointInPoly`, que ya existe.
@@ -142,11 +142,11 @@ En `editorMenu()`, dentro de «Acciones», se añade un botón de alternar **«G
 
 ```js
 const SCRIBBLE_MIN_PTS = 12;
-const SCRIBBLE_MIN_REVERSALS = 4;
+const SCRIBBLE_MIN_REVERSALS = 2;   // v4: antes 4 (exigía 5 pasadas)
 const SCRIBBLE_MIN_SWING = 8;
-const SCRIBBLE_SWING_FRAC = 0.35;
+const SCRIBBLE_SWING_FRAC = 0.25;   // v4: antes 0.35
 const SCRIBBLE_MIN_DENSITY = 2.5;
-const SCRIBBLE_PAD = 4;
+const SCRIBBLE_PAD = 8;             // v4: antes 4, y ahora es distancia real al contorno
 const SCRIBBLE_COVER = 0.6;
 ```
 
