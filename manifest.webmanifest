@@ -1,0 +1,16 @@
+{
+  "name": "Cuaderno",
+  "short_name": "Cuaderno",
+  "description": "Cuadernos para escribir a mano con el Apple Pencil.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#F8F9FB",
+  "background_color": "#E3E6EA",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
