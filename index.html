@@ -319,6 +319,7 @@ const ICON = {
   edit: S+'<path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
   folder: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   folderPlus: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v5M9.5 13h5"/></svg>',
+  scribble: S+'<path d="M4 15c2-6 3-6 4 0s2 6 4 0 2-6 4 0 2 6 4 0"/></svg>',
 };
 
 /* =========================================================
@@ -1021,11 +1022,24 @@ function scribbleTargets(P, strokes){
   }
   return out;
 }
+function tryScribbleErase(c){
+  if(c.t !== 'pen' || prefs().scribbleErase === false) return false;
+  if(!isScribble(c.pts)) return false;
+  const targets = scribbleTargets(c.pts, page.strokes);
+  if(!targets.size) return false;
+  const prev = page.strokes;
+  clearSelection();
+  page.strokes = prev.filter(s => !targets.has(s.id));
+  renderInk(); commit(prev);
+  if(!prefs().scribbleSeen){ prefs().scribbleSeen = true; saveProfileSoon(); toast('Garabato: borrado. Deshaz para recuperarlo.'); }
+  return true;
+}
 function finishAct(e){
   const a = act; act = null;
   if(a.kind === 'draw'){
     if(cur.ptype === 'pen' && !prefs().hasPressure && cur.pmax - cur.pmin > 0.08){ prefs().hasPressure = true; saveProfileSoon(); }
     if(cur.pts.length){
+      if(tryScribbleErase(cur)){ cur = null; requestLive(); return; }
       const pts = simplify(cur.pts, 0.18);
       const s = makeStroke(cur.t, cur.c, cur.w, pts);
       const prev = page.strokes; page.strokes = prev.concat([s]);
@@ -1542,18 +1556,28 @@ async function editorMenu(){
     const l = document.createElement('div'); l.className = 'menu-list';
     l.append(menuBtn(ICON.pdf, 'Exportar el cuaderno en PDF', () => done('pdf')));
     l.append(menuBtn(ICON.image, 'Exportar esta página como imagen', () => done('png')));
+    const scribOn = prefs().scribbleErase !== false;
+    const scrib = menuBtn(ICON.scribble, 'Garabatear para borrar: ' + (scribOn ? 'Sí' : 'No'), () => done('scribble'));
+    scrib.setAttribute('aria-pressed', String(scribOn));
+    l.append(scrib);
     l.append(menuBtn(ICON.trash, 'Eliminar esta página', () => done('delpage'), 'danger'));
     b.append(label('Acciones'), l);
     const help = document.createElement('ul'); help.className = 'help';
     help.innerHTML = '<li>Toca con dos dedos para deshacer y con tres para rehacer.</li>'
       + '<li>Pellizca para hacer zoom; toca dos veces con un dedo para ver la página entera o a lo ancho.</li>'
       + '<li>Con el lazo rodea lo que quieras mover, duplicar, borrar o cambiar de color.</li>'
+      + '<li>Tacha con la pluma encima de algo para borrarlo; se deshace como cualquier trazo.</li>'
       + '<li>El botón de la mano decide si el dedo escribe o solo mueve la página.</li>';
     b.append(label('Gestos'), help);
   }, actions: [{ label:'Listo', kind:'primary', value:null }] });
   if(v === 'pdf') exportPDF();
   else if(v === 'png') exportPNG();
   else if(v === 'delpage') deletePageAt(pageIdx);
+  else if(v === 'scribble'){
+    prefs().scribbleErase = prefs().scribbleErase === false;
+    saveProfileSoon();
+    toast(prefs().scribbleErase ? 'Garabatear para borrar: activado.' : 'Garabatear para borrar: desactivado.');
+  }
 }
 async function pagesOverview(){
   if(!nb) return;
