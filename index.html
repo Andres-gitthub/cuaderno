@@ -21,6 +21,7 @@
 :root{
   --desk:#E3E6EA; --chrome:#F8F9FB; --ink:#1D2430; --muted:#5E6878; --line:#D3D8DF;
   --accent:#2747C9; --accent-soft:rgba(39,71,201,.12); --danger:#B3261E; --card:#FFFFFF;
+  --folder:#C9D2DE; --folder-tab:#B3BECC;
   --shadow:0 1px 2px rgba(20,28,40,.12),0 8px 24px rgba(20,28,40,.10);
   --ui:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
   --book:"Literata",Georgia,"Times New Roman",serif;
@@ -33,6 +34,7 @@
   :root:not([data-theme="light"]){
     --desk:#121418; --chrome:#1C1F25; --ink:#E7EAF0; --muted:#9AA3B2; --line:#2E333C;
     --accent:#93A8FF; --accent-soft:rgba(147,168,255,.16); --danger:#FF8A80; --card:#22262E;
+    --folder:#3A414D; --folder-tab:#2E343E;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
     color-scheme:dark;
   }
@@ -40,6 +42,7 @@
 :root[data-theme="dark"]{
   --desk:#121418; --chrome:#1C1F25; --ink:#E7EAF0; --muted:#9AA3B2; --line:#2E333C;
   --accent:#93A8FF; --accent-soft:rgba(147,168,255,.16); --danger:#FF8A80; --card:#22262E;
+    --folder:#3A414D; --folder-tab:#2E343E;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
   color-scheme:dark;
 }
@@ -61,6 +64,15 @@ button:focus-visible,input:focus-visible,label:focus-within{outline:2px solid va
 .lib-head .sub{color:var(--muted);font-size:14px;margin-top:6px}
 .lib-head .grow{flex:1;min-width:180px}
 .lib-actions{display:flex;gap:8px;flex-wrap:wrap}
+.lib-back{margin:0 0 6px -12px;color:var(--accent)}
+.lib-back[hidden]{display:none}
+.folder{position:relative;display:block;width:100%;aspect-ratio:3/4;border:0;padding:0;background:transparent;transition:transform .15s ease}
+.folder:active{transform:scale(.98)}
+.folder::before{content:"";position:absolute;left:0;top:6%;width:44%;height:12%;background:var(--folder-tab);border-radius:9px 9px 0 0}
+.folder::after{content:"";position:absolute;left:0;right:0;top:12%;bottom:0;background:var(--folder);border-radius:4px 10px 10px 10px;box-shadow:var(--shadow)}
+.folder .label{position:absolute;z-index:1;left:12%;right:12%;top:44%;color:var(--ink);font-family:var(--book);font-weight:600;font-size:15px;line-height:1.25;text-align:center;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}
+.btn.block[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
 .lib-body{flex:1;overflow:auto;background:var(--desk);padding:28px clamp(16px,4vw,48px) 48px;-webkit-overflow-scrolling:touch}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:32px 26px;max-width:1200px}
 .card{display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -196,7 +208,7 @@ dialog::backdrop{background:rgba(10,14,22,.45)}
   background:var(--ink);color:var(--chrome);padding:11px 16px;border-radius:12px;font-size:14px;max-width:min(520px,calc(100vw - 32px));
   box-shadow:var(--shadow);transition:opacity .2s,transform .2s;pointer-events:none;z-index:30;line-height:1.4}
 .toast.show{opacity:1;transform:translate(-50%,0)}
-@media (prefers-reduced-motion: reduce){.toast,.cover{transition:none}}
+@media (prefers-reduced-motion: reduce){.toast,.cover,.folder{transition:none}}
 </style>
 </head>
 <body>
@@ -204,7 +216,8 @@ dialog::backdrop{background:rgba(10,14,22,.45)}
   <section id="library" class="view" aria-label="Biblioteca">
     <header class="lib-head">
       <div class="grow">
-        <h1>Cuadernos</h1>
+        <button class="pill lib-back" id="btn-lib-back" hidden></button>
+        <h1 id="lib-title">Cuadernos</h1>
         <div class="sub" id="store-mode">Cargando…</div>
       </div>
       <span class="status" id="status-lib"></span>
@@ -304,6 +317,8 @@ const ICON = {
   image: S+'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/></svg>',
   trash: S+'<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>',
   edit: S+'<path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+  folder: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  folderPlus: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v5M9.5 13h5"/></svg>',
 };
 
 /* =========================================================
@@ -1230,13 +1245,44 @@ function moveNotebook(n, folderId){
 /* =========================================================
    Biblioteca
    ========================================================= */
+let curFolder = null;   // carpeta que se ve en la biblioteca; null = raíz
+const EMPTY_ROOT = 'Todavía no tienes cuadernos. Crea uno, elige el papel y empieza a escribir con el Apple Pencil.';
+const EMPTY_FOLDER = 'Esta carpeta está vacía. Crea un cuaderno aquí o mueve uno desde el menú ⋯ de cualquier cuaderno.';
+function newCard(icon, text, fn){
+  const b = document.createElement('button'); b.className = 'card';
+  b.innerHTML = '<span class="cover cover-new">' + icon + '</span><span class="meta"><span class="txt"><span class="t"></span></span></span>';
+  b.querySelector('.t').textContent = text; b.onclick = fn; return b;
+}
+function countText(k){ return k + (k === 1 ? ' cuaderno' : ' cuadernos'); }
+function folderCard(f){
+  const card = document.createElement('div'); card.className = 'card';
+  const cov = document.createElement('button'); cov.className = 'folder';
+  cov.setAttribute('aria-label', 'Abrir carpeta ' + f.name);
+  const lab = document.createElement('span'); lab.className = 'label'; lab.textContent = f.name;
+  cov.append(lab); cov.onclick = () => { curFolder = f.id; renderLibrary(); };
+  const meta = document.createElement('div'); meta.className = 'meta';
+  const txt = document.createElement('div'); txt.className = 'txt';
+  const t = document.createElement('div'); t.className = 't'; t.textContent = f.name;
+  const d = document.createElement('div'); d.className = 'd'; d.textContent = countText(notebooksIn(f.id).length);
+  txt.append(t, d);
+  const more = document.createElement('button'); more.className = 'ib sm'; more.innerHTML = ICON.more;
+  more.setAttribute('aria-label', 'Opciones de la carpeta ' + f.name);
+  more.onclick = () => folderActions(f);
+  meta.append(txt, more); card.append(cov, meta);
+  return card;
+}
 function renderLibrary(){
+  if(curFolder && !folderById(curFolder)) curFolder = null;
+  const folder = folderById(curFolder);
+  $('#lib-title').textContent = folder ? folder.name : 'Cuadernos';
+  $('#btn-lib-back').hidden = !folder;
   const g = $('#grid'); g.textContent = '';
-  const add = document.createElement('button');
-  add.className = 'card';
-  add.innerHTML = '<span class="cover cover-new">' + ICON.plus + '</span><span class="meta"><span class="txt"><span class="t">Nuevo cuaderno</span></span></span>';
-  add.onclick = newNotebookFlow; g.append(add);
-  const list = [...profile.notebooks].sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  g.append(newCard(ICON.plus, 'Nuevo cuaderno', () => newNotebookFlow(curFolder)));
+  if(!folder){
+    g.append(newCard(ICON.folderPlus, 'Nueva carpeta', newFolderFlow));
+    for(const f of [...profile.folders].sort((a, b) => a.name.localeCompare(b.name, 'es'))) g.append(folderCard(f));
+  }
+  const list = notebooksIn(curFolder).sort((a, b) => (b.updated || 0) - (a.updated || 0));
   for(const n of list){
     const card = document.createElement('div'); card.className = 'card';
     const cov = document.createElement('button'); cov.className = 'cover';
@@ -1255,19 +1301,64 @@ function renderLibrary(){
     more.onclick = () => notebookActions(n);
     meta.append(txt, more); card.append(cov, meta); g.append(card);
   }
-  $('#empty').hidden = profile.notebooks.length > 0;
+  const empty = $('#empty');
+  empty.textContent = folder ? EMPTY_FOLDER : EMPTY_ROOT;
+  empty.hidden = folder ? list.length > 0 : (profile.notebooks.length > 0 || profile.folders.length > 0);
   $('#store-mode').textContent = 'Tus cuadernos se guardan en este dispositivo. Haz una copia de vez en cuando con «Exportar copia».';
 }
+async function newFolderFlow(){
+  const name = await askText('Nueva carpeta', '', 'Crear');
+  if(!name) return;
+  createFolder(name); renderLibrary();
+}
+async function folderActions(f){
+  const v = await modal({ title: f.name, body: (b, done) => {
+    const l = document.createElement('div'); l.className = 'menu-list';
+    l.append(menuBtn(ICON.edit, 'Cambiar nombre', () => done('rename')));
+    l.append(menuBtn(ICON.trash, 'Eliminar carpeta', () => done('delete'), 'danger'));
+    b.append(l);
+  }, actions: [{ label:'Cerrar', value:null }] });
+  if(v === 'rename'){
+    const t = await askText('Nombre de la carpeta', f.name, 'Guardar');
+    if(t){ renameFolder(f.id, t); renderLibrary(); }
+  } else if(v === 'delete'){
+    const k = notebooksIn(f.id).length;
+    const moved = k === 0 ? '' : (k === 1 ? 'El cuaderno que contiene pasará' : 'Los ' + k + ' cuadernos que contiene pasarán') + ' a la biblioteca. ';
+    const ok = await confirmBox('¿Eliminar la carpeta «' + f.name + '»?', moved + 'No se borra ningún cuaderno.', 'Eliminar carpeta');
+    if(!ok) return;
+    deleteFolder(f.id); renderLibrary();
+  }
+}
+async function moveNotebookFlow(n){
+  const cur = folderOf(n);
+  const v = await modal({ title: 'Mover «' + n.title + '»', body: (b, done) => {
+    const l = document.createElement('div'); l.className = 'menu-list';
+    const opt = (icon, label, id) => {
+      const bt = menuBtn(icon, label, () => done({ to: id }));
+      bt.setAttribute('aria-pressed', String(cur === id)); l.append(bt);
+    };
+    opt(ICON.pages, 'Sin carpeta (biblioteca)', null);
+    for(const f of [...profile.folders].sort((a, b) => a.name.localeCompare(b.name, 'es'))) opt(ICON.folder, f.name, f.id);
+    b.append(l);
+  }, actions: [{ label:'Cancelar', value:null }] });
+  if(!v) return;
+  moveNotebook(n, v.to); renderLibrary();
+}
+$('#btn-lib-back').innerHTML = ICON.back + '<span>Cuadernos</span>';
+$('#btn-lib-back').onclick = () => { curFolder = null; renderLibrary(); };
 async function notebookActions(n){
   const v = await modal({ title: n.title, body: (b, done) => {
     const l = document.createElement('div'); l.className = 'menu-list';
     l.append(menuBtn(ICON.edit, 'Cambiar nombre', () => done('rename')));
+    if(profile.folders.length || folderOf(n)) l.append(menuBtn(ICON.folder, 'Mover a carpeta', () => done('move')));
     l.append(menuBtn(ICON.trash, 'Eliminar cuaderno', () => done('delete'), 'danger'));
     b.append(l);
   }, actions: [{ label:'Cerrar', value:null }] });
   if(v === 'rename'){
     const t = await askText('Nombre del cuaderno', n.title, 'Guardar');
     if(t){ n.title = t; saveProfile(); renderLibrary(); }
+  } else if(v === 'move'){
+    moveNotebookFlow(n);
   } else if(v === 'delete'){
     const ok = await confirmBox('¿Eliminar «' + n.title + '»?', 'Se borrarán sus ' + n.pages.length + (n.pages.length === 1 ? ' página' : ' páginas') + '. No se puede deshacer.', 'Eliminar cuaderno');
     if(!ok) return;
@@ -1307,7 +1398,7 @@ function paperColorPicker(state, onChange, papers){
   return seg;
 }
 function label(t){ const d = document.createElement('div'); d.className = 'flabel'; d.textContent = t; return d; }
-async function newNotebookFlow(){
+async function newNotebookFlow(folderId){
   const st = { title:'', cover:COVERS[profile.notebooks.length % COVERS.length][0], paper:'lined', paperColor:'white' };
   let inp;
   const v = await modal({ title:'Nuevo cuaderno', body: (b, done) => {
@@ -1329,6 +1420,7 @@ async function newNotebookFlow(){
   st.title = (inp.value || '').trim() || 'Cuaderno sin título';
   const pid = uid();
   const n = { id:uid(), title:st.title, cover:st.cover, paper:st.paper, paperColor:st.paperColor, pages:[pid], created:Date.now(), updated:Date.now(), lastPage:0 };
+  if(folderById(folderId)) n.folder = folderId;
   profile.notebooks.unshift(n);
   pages.set(pid, { id:pid, nb:n.id, strokes:[] });
   saveProfile(); renderLibrary(); openNotebook(n.id);
@@ -1478,7 +1570,7 @@ async function restoreBackup(file){
     await backend.setProfile(o.profile);
   } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
   pages.clear(); hist.clear();
-  profile = normalizeProfile(o.profile);
+  profile = normalizeProfile(o.profile); curFolder = null;
   updFingerBtn(); renderLibrary();
   toast('Copia restaurada.');
 }
