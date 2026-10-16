@@ -429,7 +429,7 @@ let view = { s:1, tx:0, ty:0 };
 let selection = null;      // {ids:Set, bb:[...], dx, dy}
 const ui = { tool:'pen', color:{ pen:PEN_COLORS[0], hl:HL_COLORS[0] }, size:{ pen:1, hl:1, eraser:1 } };
 
-function defaultProfile(){ return { v:1, notebooks:[], prefs:{} }; }
+function defaultProfile(){ return { v:1, notebooks:[], folders:[], prefs:{} }; }
 function prefs(){ return profile.prefs; }
 let profileTimer = 0;
 let profTouched = false;
@@ -1201,6 +1201,33 @@ async function renameCurrent(){
 }
 
 /* =========================================================
+   Carpetas (un solo nivel; viven en el perfil)
+   ========================================================= */
+function normalizeProfile(p){
+  const prof = p && Array.isArray(p.notebooks) ? p : defaultProfile();
+  prof.prefs = prof.prefs || {};
+  prof.folders = Array.isArray(prof.folders) ? prof.folders : [];
+  return prof;
+}
+function folderById(id){ return id ? profile.folders.find(f => f.id === id) || null : null; }
+function folderOf(n){ return folderById(n.folder) ? n.folder : null; }
+function notebooksIn(folderId){ return profile.notebooks.filter(n => folderOf(n) === (folderId || null)); }
+function createFolder(name){
+  const f = { id: uid(), name, created: Date.now() };
+  profile.folders.push(f); saveProfile(); return f;
+}
+function renameFolder(id, name){ const f = folderById(id); if(!f) return; f.name = name; saveProfile(); }
+function deleteFolder(id){
+  for(const n of profile.notebooks) if(n.folder === id) delete n.folder;
+  profile.folders = profile.folders.filter(f => f.id !== id);
+  saveProfile();
+}
+function moveNotebook(n, folderId){
+  if(folderId && folderById(folderId)) n.folder = folderId; else delete n.folder;
+  saveProfile();
+}
+
+/* =========================================================
    Biblioteca
    ========================================================= */
 function renderLibrary(){
@@ -1451,7 +1478,7 @@ async function restoreBackup(file){
     await backend.setProfile(o.profile);
   } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
   pages.clear(); hist.clear();
-  profile = o.profile; profile.prefs = profile.prefs || {};
+  profile = normalizeProfile(o.profile);
   updFingerBtn(); renderLibrary();
   toast('Copia restaurada.');
 }
@@ -1508,8 +1535,7 @@ async function init(){
   backend = localBackend();
   let p = null;
   try { p = await backend.getProfile(); } catch(_){}
-  profile = p && Array.isArray(p.notebooks) ? p : defaultProfile();
-  profile.prefs = profile.prefs || {};
+  profile = normalizeProfile(p);
   if(profile.prefs.ui){
     const u = profile.prefs.ui;
     if(['pen','hl','eraser','lasso'].includes(u.tool)) ui.tool = u.tool;
