@@ -1,6 +1,6 @@
 'use strict';
 // Sube la versión cada vez que publiques cambios para que el iPad descargue la nueva app.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const APP_CACHE = 'cuaderno-app-' + VERSION;
 const FONT_CACHE = 'cuaderno-fonts-' + VERSION;
 const PRECACHE = [

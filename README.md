@@ -10,7 +10,7 @@ Organiza los cuadernos en carpetas (una por asignatura) y tacha con la pluma enc
 2. En el repositorio, ve a **Settings → Pages**, elige **Deploy from a branch**, la rama `main` y la carpeta `/ (root)`.
 3. La app quedará en `https://TU-USUARIO.github.io/NOMBRE-DEL-REPO/`.
 
-Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v1` a `v2`). Así el iPad descarga la versión nueva.
+Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v3` a `v4`). Así el iPad descarga la versión nueva.
 
 ## Instalar en el iPad
 

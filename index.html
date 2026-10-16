@@ -775,6 +775,11 @@ stage.addEventListener('pointerup', onUp);
 stage.addEventListener('pointercancel', onUp);
 stage.addEventListener('pointerleave', e => { if(!act && eraserPos && e.pointerType !== 'touch'){ eraserPos = null; requestLive(); } });
 stage.addEventListener('contextmenu', e => e.preventDefault());
+// iPadOS: si el lienzo no bloquea los eventos táctiles, Safari puede tomar un trazo corto del lápiz
+// como gesto propio (desplazar, seleccionar, Scribble) y el trazo se pierde.
+for(const ev of ['touchstart','touchmove','touchend']) stage.addEventListener(ev, e => {
+  if(!(e.target.closest && e.target.closest('.selmenu'))) e.preventDefault();
+}, { passive:false });
 for(const ev of ['gesturestart','gesturechange','gestureend']) document.addEventListener(ev, e => e.preventDefault());
 
 function onDown(e){
@@ -803,7 +808,11 @@ function onDown(e){
       toast('Apple Pencil detectado: el lápiz escribe y el dedo mueve la página y hace zoom.', 5000);
     }
     if(act && act.kind === 'gesture'){ endGesture(false); for(const t of touches.values()) t.ignored = true; }
-    else if(act){ if(act.ptype === 'touch') abortAct(); else return; }
+    else if(act){
+      if(act.ptype === 'touch') abortAct();
+      else if(act.ptype === 'pen') finishAct(e); // el lápiz no puede estar en dos sitios: el trazo anterior perdió su «levantar»
+      else return;
+    }
     startTool(e); return;
   }
   if(act) return;
