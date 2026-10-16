@@ -918,6 +918,109 @@ function pointInPoly(x, y, poly){
   }
   return inside;
 }
+/* =========================================================
+   Garabatear para borrar: reconocimiento (funciones puras)
+   Unidades de página (1000 × 1414). Ajustar tras probar en el iPad.
+   ========================================================= */
+const SCRIBBLE_MIN_PTS = 12;        // puntos mínimos del trazo
+const SCRIBBLE_MIN_REVERSALS = 4;   // cambios de sentido sobre el eje principal
+const SCRIBBLE_MIN_SWING = 8;       // retroceso mínimo para contar un cambio
+const SCRIBBLE_SWING_FRAC = 0.35;   // … o esta fracción de la extensión, si es mayor
+const SCRIBBLE_MIN_DENSITY = 2.5;   // longitud / diagonal de la caja
+const SCRIBBLE_PAD = 4;             // margen de la zona tachada
+const SCRIBBLE_COVER = 0.6;         // fracción de un trazo que debe quedar dentro
+function strokeLength(P){
+  let L = 0;
+  for(let i=3;i<P.length;i+=3) L += Math.hypot(P[i]-P[i-3], P[i+1]-P[i-2]);
+  return L;
+}
+function principalAxis(P){
+  const n = P.length/3; let mx = 0, my = 0;
+  for(let i=0;i<n;i++){ mx += P[i*3]; my += P[i*3+1]; }
+  mx /= n; my /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for(let i=0;i<n;i++){ const dx = P[i*3]-mx, dy = P[i*3+1]-my; sxx += dx*dx; syy += dy*dy; sxy += dx*dy; }
+  const a = 0.5*Math.atan2(2*sxy, sxx - syy);
+  return [Math.cos(a), Math.sin(a)];
+}
+function isScribble(P){
+  const n = P.length/3;
+  if(n < SCRIBBLE_MIN_PTS) return false;
+  const [ax, ay] = principalAxis(P);
+  const proj = new Float64Array(n); let lo = Infinity, hi = -Infinity;
+  for(let i=0;i<n;i++){ const t = P[i*3]*ax + P[i*3+1]*ay; proj[i] = t; if(t < lo) lo = t; if(t > hi) hi = t; }
+  const extent = hi - lo;
+  if(!(extent >= SCRIBBLE_MIN_SWING*2)) return false;
+  const swing = Math.max(SCRIBBLE_MIN_SWING, extent*SCRIBBLE_SWING_FRAC);
+  let dir = 0, hiE = proj[0], loE = proj[0], rev = 0;
+  for(let i=1;i<n;i++){
+    const t = proj[i];
+    if(dir === 0){
+      if(t - loE >= swing){ dir = 1; hiE = t; }
+      else if(hiE - t >= swing){ dir = -1; loE = t; }
+      else { if(t > hiE) hiE = t; if(t < loE) loE = t; }
+    } else if(dir === 1){
+      if(t > hiE) hiE = t; else if(hiE - t >= swing){ dir = -1; loE = t; rev++; }
+    } else {
+      if(t < loE) loE = t; else if(t - loE >= swing){ dir = 1; hiE = t; rev++; }
+    }
+  }
+  if(rev < SCRIBBLE_MIN_REVERSALS) return false;
+  const b = bboxOf(P, 0), diag = Math.hypot(b[2]-b[0], b[3]-b[1]);
+  return diag > 0 && strokeLength(P) >= SCRIBBLE_MIN_DENSITY*diag;
+}
+function convexHull(P){
+  const pts = [];
+  for(let i=0;i<P.length;i+=3) pts.push([P[i], P[i+1]]);
+  pts.sort((a, b) => a[0]-b[0] || a[1]-b[1]);
+  if(pts.length < 3) return pts.flat();
+  const cross = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+  const lower = [], upper = [];
+  for(const p of pts){ while(lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p); }
+  for(let i=pts.length-1;i>=0;i--){ const p = pts[i]; while(upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p); }
+  upper.pop(); lower.pop();
+  return lower.concat(upper).flat();
+}
+function padPoly(poly, pad){
+  const m = poly.length/2; let cx = 0, cy = 0;
+  for(let i=0;i<m;i++){ cx += poly[i*2]; cy += poly[i*2+1]; }
+  cx /= m; cy /= m;
+  const out = [];
+  for(let i=0;i<m;i++){
+    const dx = poly[i*2]-cx, dy = poly[i*2+1]-cy, d = Math.hypot(dx, dy) || 1;
+    out.push(poly[i*2] + dx/d*pad, poly[i*2+1] + dy/d*pad);
+  }
+  return out;
+}
+function coverFraction(s, poly){
+  const P = s.pts, n = P.length/3;
+  if(n === 1) return pointInPoly(P[0], P[1], poly) ? 1 : 0;
+  let tot = 0, ins = 0;
+  for(let i=0;i<n-1;i++){
+    const x0 = P[i*3], y0 = P[i*3+1], x1 = P[i*3+3], y1 = P[i*3+4], L = Math.hypot(x1-x0, y1-y0);
+    if(!L) continue;
+    const k = Math.max(1, Math.ceil(L/4));
+    for(let j=0;j<k;j++){
+      const t = (j + 0.5)/k; tot += L/k;
+      if(pointInPoly(x0 + (x1-x0)*t, y0 + (y1-y0)*t, poly)) ins += L/k;
+    }
+  }
+  return tot ? ins/tot : (pointInPoly(P[0], P[1], poly) ? 1 : 0);
+}
+function scribbleTargets(P, strokes){
+  const out = new Set();
+  const hull = convexHull(P);
+  if(hull.length < 6) return out;
+  const zone = padPoly(hull, SCRIBBLE_PAD);
+  let zx0 = Infinity, zy0 = Infinity, zx1 = -Infinity, zy1 = -Infinity;
+  for(let i=0;i<zone.length;i+=2){ zx0 = Math.min(zx0, zone[i]); zx1 = Math.max(zx1, zone[i]); zy0 = Math.min(zy0, zone[i+1]); zy1 = Math.max(zy1, zone[i+1]); }
+  for(const s of strokes){
+    const b = s.bb;
+    if(b[2] < zx0 || b[0] > zx1 || b[3] < zy0 || b[1] > zy1) continue;
+    if(coverFraction(s, zone) >= SCRIBBLE_COVER) out.add(s.id);
+  }
+  return out;
+}
 function finishAct(e){
   const a = act; act = null;
   if(a.kind === 'draw'){
