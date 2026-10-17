@@ -390,6 +390,12 @@ function localBackend(){
     getPage: id => safe(() => IDB.get('page:'+id), () => mem.get('page:'+id)),
     setPage: (id, v) => safe(() => IDB.set('page:'+id, v), () => { mem.set('page:'+id, v); }),
     delPage: id => safe(() => IDB.del('page:'+id), () => { mem.delete('page:'+id); }),
+    getImg: id => safe(() => IDB.get('img:'+id), () => mem.get('img:'+id)),
+    setImg: async (id, v) => {   // un error de cuota se propaga: no se puede fingir que se guardó
+      try { await IDB.set('img:'+id, v); }
+      catch(e){ if(e && e.name === 'QuotaExceededError') throw e; mem.set('img:'+id, v); }
+    },
+    delImg: id => safe(() => IDB.del('img:'+id), () => { mem.delete('img:'+id); }),
   };
 }
 async function withRetry(fn){
@@ -748,6 +754,7 @@ function savePageNow(pg){
   clearTimeout(dirty.get(pg.id)); dirty.delete(pg.id);
   writer.schedule('page:' + pg.id, () => {
     const body = { nb: pg.nb, strokes: pg.strokes.map(encStroke), updated: Date.now() };
+    if(pg.bg) body.bg = pg.bg;
     return backend.setPage(pg.id, body);
   });
 }
@@ -1272,7 +1279,19 @@ async function loadPage(id, nbId){
   catch(e){ toast('No se pudo abrir la página. Comprueba tu conexión.'); }
   if(pages.has(id)) return pages.get(id);
   const pg = { id, nb: nbId, strokes: doc && Array.isArray(doc.strokes) ? doc.strokes.map(decStroke).filter(Boolean) : [] };
+  if(doc && doc.bg && typeof doc.bg.img === 'string') pg.bg = doc.bg;
   pages.set(id, pg); return pg;
+}
+// Borra una página guardada y, si tiene diapositiva de fondo, también su imagen
+function dropPageData(id){
+  const pg = pages.get(id);
+  clearTimeout(dirty.get(id)); dirty.delete(id); pages.delete(id); hist.delete(id);
+  writer.schedule('page:' + id, async () => {
+    let doc = pg;
+    if(!doc){ try { doc = await backend.getPage(id); } catch(_){} }
+    if(doc && doc.bg) await backend.delImg(doc.bg.img);
+    return backend.delPage(id);
+  });
 }
 function openNotebook(id){
   nb = profile.notebooks.find(n => n.id === id); if(!nb) return;
@@ -1321,9 +1340,7 @@ async function deletePageAt(i){
   const ok = await confirmBox('¿Eliminar la página ' + (i+1) + '?', 'Se borrará todo lo que hay escrito en ella. No se puede deshacer.', 'Eliminar página');
   if(!ok) return false;
   const [id] = nb.pages.splice(i, 1);
-  clearTimeout(dirty.get(id)); dirty.delete(id);
-  pages.delete(id); hist.delete(id);
-  writer.schedule('page:' + id, () => backend.delPage(id));
+  dropPageData(id);
   nb.updated = Date.now(); saveProfile();
   const target = Math.min(i <= pageIdx ? Math.max(0, pageIdx - (i < pageIdx ? 1 : 0)) : pageIdx, nb.pages.length - 1);
   pageIdx = -1; page = null;
@@ -1484,7 +1501,7 @@ async function notebookActions(n){
   } else if(v === 'delete'){
     const ok = await confirmBox('¿Eliminar «' + n.title + '»?', 'Se borrarán sus ' + n.pages.length + (n.pages.length === 1 ? ' página' : ' páginas') + '. No se puede deshacer.', 'Eliminar cuaderno');
     if(!ok) return;
-    for(const id of n.pages){ clearTimeout(dirty.get(id)); dirty.delete(id); pages.delete(id); hist.delete(id); writer.schedule('page:' + id, () => backend.delPage(id)); }
+    for(const id of n.pages) dropPageData(id);
     profile.notebooks = profile.notebooks.filter(x => x.id !== n.id);
     saveProfile(); renderLibrary();
   }
@@ -1661,6 +1678,16 @@ async function exportPDF(){
 /* =========================================================
    Importar PDF: lector (pdf.js, se carga solo al importar)
    ========================================================= */
+const IMPORT_WIDTH = 2000;    // px de ancho al convertir cada página
+const IMPORT_MAX_H = 2800;    // px de alto como máximo
+const IMPORT_QUALITY = 0.85;  // calidad JPEG
+const IMPORT_MARGIN = 40;     // margen de la diapositiva en la página (unidades de página)
+// Dónde va la diapositiva en la página: arriba, a todo el ancho; si es muy alta, cabe en vertical y centrada
+function bgRect(srcW, srcH){
+  let w = PW - 2*IMPORT_MARGIN, h = w * srcH / srcW;
+  if(h > PH - 2*IMPORT_MARGIN){ h = PH - 2*IMPORT_MARGIN; w = h * srcW / srcH; }
+  return { x: (PW - w)/2, y: IMPORT_MARGIN, w, h };
+}
 let pdfjsP = null;
 function loadPdfjs(){
   if(!pdfjsP) pdfjsP = import('./vendor/pdfjs/pdf.min.mjs').then(m => {
