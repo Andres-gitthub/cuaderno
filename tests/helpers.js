@@ -88,3 +88,28 @@ window.idbSnapshot = async () => {
   for(const n of P.notebooks) for(const id of n.pages) out.pages[id] = (await IDB.get('page:' + id)) || null;
   return JSON.stringify(out);
 };
+
+// ---- PDF y JPEG de prueba ----
+window.makeTestPdf = () => {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: [160, 90], orientation: 'landscape' });
+  doc.setFillColor(220, 30, 30); doc.rect(0, 0, 160, 90, 'F');
+  doc.addPage([160, 90], 'landscape'); doc.setFillColor(30, 60, 220); doc.rect(0, 0, 160, 90, 'F');
+  doc.addPage('a4', 'portrait'); doc.setFillColor(30, 160, 60); doc.rect(0, 0, 210, 297, 'F');
+  return doc.output('blob');
+};
+window.noiseJpeg = (w = 320, h = 180, rgb = [220, 30, 30]) => {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'), d = x.createImageData(w, h);
+  for(let i = 0; i < d.data.length; i += 4){
+    const n = (Math.random() - 0.5) * 30;
+    d.data[i] = rgb[0] + n; d.data[i+1] = rgb[1] + n; d.data[i+2] = rgb[2] + n; d.data[i+3] = 255;
+  }
+  x.putImageData(d, 0, 0);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+};
+window.idbKeys = () => new Promise((res, rej) => {
+  const r = indexedDB.open('cuaderno');
+  r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess = () => { res(q.result.map(String)); r.result.close(); }; q.onerror = () => rej(q.error); };
+  r.onerror = () => rej(r.error);
+});

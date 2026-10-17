@@ -1659,6 +1659,18 @@ async function exportPDF(){
 }
 
 /* =========================================================
+   Importar PDF: lector (pdf.js, se carga solo al importar)
+   ========================================================= */
+let pdfjsP = null;
+function loadPdfjs(){
+  if(!pdfjsP) pdfjsP = import('./vendor/pdfjs/pdf.min.mjs').then(m => {
+    m.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.mjs';
+    return m;
+  }).catch(e => { pdfjsP = null; throw e; });
+  return pdfjsP;
+}
+
+/* =========================================================
    Copia de seguridad: perfil y páginas tal cual se guardan
    ========================================================= */
 const BACKUP_APP = 'cuaderno-copia';

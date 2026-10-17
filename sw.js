@@ -11,6 +11,8 @@ const PRECACHE = [
   'icons/icon-512.png',
   'icons/apple-touch-icon-180.png',
   'vendor/jspdf.umd.min.js',
+  'vendor/pdfjs/pdf.min.mjs',
+  'vendor/pdfjs/pdf.worker.min.mjs',
 ];
 
 self.addEventListener('install', e => {
