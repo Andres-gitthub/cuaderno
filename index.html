@@ -225,6 +225,7 @@ dialog::backdrop{background:rgba(10,14,22,.45)}
         <button class="btn" id="btn-backup">Exportar copia</button>
         <button class="btn" id="btn-restore">Restaurar copia</button>
         <input type="file" id="restore-file" accept=".json,application/json" hidden>
+        <input type="file" id="pdf-file" accept="application/pdf,.pdf" hidden>
       </div>
     </header>
     <div class="lib-body">
@@ -320,6 +321,7 @@ const ICON = {
   folder: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   folderPlus: S+'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v5M9.5 13h5"/></svg>',
   scribble: S+'<path d="M4 15c2-6 3-6 4 0s2 6 4 0 2-6 4 0 2 6 4 0"/></svg>',
+  pdfIn: S+'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9.5 14.5L12 17l2.5-2.5"/></svg>',
 };
 
 /* =========================================================
@@ -1457,10 +1459,9 @@ function renderLibrary(){
   $('#btn-lib-back').hidden = !folder;
   const g = $('#grid'); g.textContent = '';
   g.append(newCard(ICON.plus, 'Nuevo cuaderno', () => newNotebookFlow(curFolder)));
-  if(!folder){
-    g.append(newCard(ICON.folderPlus, 'Nueva carpeta', newFolderFlow));
-    for(const f of [...profile.folders].sort((a, b) => a.name.localeCompare(b.name, 'es'))) g.append(folderCard(f));
-  }
+  if(!folder) g.append(newCard(ICON.folderPlus, 'Nueva carpeta', newFolderFlow));
+  g.append(newCard(ICON.pdfIn, 'Importar PDF', () => pickPdf({ folderId: curFolder })));
+  if(!folder) for(const f of [...profile.folders].sort((a, b) => a.name.localeCompare(b.name, 'es'))) g.append(folderCard(f));
   const list = notebooksIn(curFolder).sort((a, b) => (b.updated || 0) - (a.updated || 0));
   for(const n of list){
     const card = document.createElement('div'); card.className = 'card';
@@ -1616,6 +1617,7 @@ async function editorMenu(){
     const papers = paperPicker(st, apply);
     b.append(label('Papel de este cuaderno'), papers, paperColorPicker(st, apply, papers));
     const l = document.createElement('div'); l.className = 'menu-list';
+    l.append(menuBtn(ICON.pdfIn, 'Añadir PDF al final', () => done('addpdf')));
     l.append(menuBtn(ICON.pdf, 'Exportar el cuaderno en PDF', () => done('pdf')));
     l.append(menuBtn(ICON.image, 'Exportar esta página como imagen', () => done('png')));
     const scribOn = prefs().scribbleErase !== false;
@@ -1632,7 +1634,8 @@ async function editorMenu(){
       + '<li>El botón de la mano decide si el dedo escribe o solo mueve la página.</li>';
     b.append(label('Gestos'), help);
   }, actions: [{ label:'Listo', kind:'primary', value:null }] });
-  if(v === 'pdf') exportPDF();
+  if(v === 'addpdf') pickPdf({ nb });
+  else if(v === 'pdf') exportPDF();
   else if(v === 'png') exportPNG();
   else if(v === 'delpage') deletePageAt(pageIdx);
   else if(v === 'scribble'){
@@ -1739,6 +1742,81 @@ function loadPdfjs(){
   }).catch(e => { pdfjsP = null; throw e; });
   return pdfjsP;
 }
+async function renderPdfPage(pdf, i){
+  const p = await pdf.getPage(i);
+  try {
+    const vp1 = p.getViewport({ scale: 1 });
+    let scale = IMPORT_WIDTH / vp1.width;
+    if(vp1.height * scale > IMPORT_MAX_H) scale = IMPORT_MAX_H / vp1.height;
+    const vp = p.getViewport({ scale });
+    const c = document.createElement('canvas');
+    c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    try {
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, c.width, c.height);
+      await p.render({ canvasContext: ctx, viewport: vp }).promise;
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', IMPORT_QUALITY));
+      if(!blob) throw new Error('toBlob');
+      return Object.assign({ img: uid(), blob }, bgRect(vp1.width, vp1.height));
+    } finally { c.width = c.height = 0; }   // Safari limita mucho la memoria de los canvas
+  } finally { p.cleanup(); }
+}
+let importing = false;
+// target: { folderId } para un cuaderno nuevo, o { nb } para añadir al final de uno existente
+async function importPdf(file, target){
+  if(importing){ toast('Ya se está importando un PDF.'); return null; }
+  importing = true;
+  let pdf = null;
+  try {
+    let lib;
+    try { lib = await loadPdfjs(); } catch(e){ toast('No se pudo cargar el lector de PDF.', 5000); return null; }
+    try { pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise; }
+    catch(e){ toast('No se pudo abrir este PDF.', 5000); return null; }
+    let n = target.nb, isNew = false;
+    if(!n){
+      const title = (file.name || '').replace(/\.pdf$/i, '').trim().slice(0, 80) || 'PDF importado';
+      n = { id: uid(), title, cover: COVERS[profile.notebooks.length % COVERS.length][0], paper: 'lined', paperColor: 'white', pages: [], created: Date.now(), updated: Date.now(), lastPage: 0 };
+      if(folderById(target.folderId)) n.folder = target.folderId;
+      profile.notebooks.unshift(n); isNew = true;
+    }
+    const T = pdf.numPages, first = n.pages.length;
+    let done = 0, failed = 0, full = false;
+    for(let i = 1; i <= T; i++){
+      toast('Importando diapositiva ' + i + ' de ' + T + '…', 60000);
+      let r = null;
+      try { r = await renderPdfPage(pdf, i); } catch(e){ failed++; }
+      const pg = { id: uid(), nb: n.id, strokes: [] };
+      if(r){
+        try { await backend.setImg(r.img, r.blob); }
+        catch(e){ full = true; break; }
+        pg.bg = { img: r.img, x: r.x, y: r.y, w: r.w, h: r.h };
+      }
+      pages.set(pg.id, pg); n.pages.push(pg.id); savePageNow(pg); done++;
+    }
+    if(isNew && !n.pages.length) profile.notebooks = profile.notebooks.filter(x => x !== n);
+    n.updated = Date.now(); saveProfile();
+    if(full) toast('Sin espacio: se importaron ' + done + ' de ' + T + ' páginas.', 6000);
+    else if(failed) toast(failed === 1 ? '1 página no se pudo convertir.' : failed + ' páginas no se pudieron convertir.', 6000);
+    else toast('PDF importado: ' + done + (done === 1 ? ' página' : ' páginas'));
+    return { nb: n, first, done };
+  } finally {
+    importing = false;
+    if(pdf) pdf.destroy();
+  }
+}
+async function importPdfFlow(file, target){
+  const r = await importPdf(file, target);
+  if(!r || !r.done) return r;
+  if(target.nb){ if(nb === target.nb){ updPagebar(); await goPage(r.first); } }
+  else { renderLibrary(); openNotebook(r.nb.id); }
+  return r;
+}
+let pdfTarget = null;
+function pickPdf(target){ pdfTarget = target; const f = $('#pdf-file'); f.value = ''; f.click(); }
+$('#pdf-file').onchange = e => {
+  const f = e.target.files && e.target.files[0], target = pdfTarget; pdfTarget = null;
+  if(f && target) importPdfFlow(f, target);
+};
 
 /* =========================================================
    Copia de seguridad: perfil y páginas tal cual se guardan
