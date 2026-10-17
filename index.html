@@ -609,8 +609,44 @@ function renderPageCanvas(pg, n, width){
   const x = c.getContext('2d'), k = c.width/PW;
   x.setTransform(k,0,0,k,0,0);
   drawPaper(x, n, Math.max(0.9, 1/k));
+  drawBg(x, pg, Math.max(0.9, 1/k));
   drawStrokes(x, pg ? pg.strokes : []);
   return c;
+}
+
+/* Diapositiva de fondo: imágenes decodificadas en una caché pequeña (las más recientes) */
+const BG_CACHE_MAX = 8;
+const bgCache = new Map();   // imgId -> ImageBitmap | HTMLImageElement
+async function decodeImg(blob){
+  if(window.createImageBitmap) return createImageBitmap(blob);
+  const url = URL.createObjectURL(blob);
+  try { const im = new Image(); im.src = url; await im.decode(); return im; }
+  finally { URL.revokeObjectURL(url); }
+}
+async function ensureBg(pg){
+  if(!pg || !pg.bg) return;
+  const id = pg.bg.img;
+  if(bgCache.has(id)){ const v = bgCache.get(id); bgCache.delete(id); bgCache.set(id, v); return; }
+  let blob = null;
+  try { blob = await backend.getImg(id); } catch(_){}
+  if(!blob) return;
+  let im = null;
+  try { im = await decodeImg(blob); } catch(_){ return; }
+  bgCache.set(id, im);
+  while(bgCache.size > BG_CACHE_MAX){
+    const [k, v] = bgCache.entries().next().value;
+    bgCache.delete(k); if(v && v.close) v.close();
+  }
+}
+function drawBg(ctx, pg, hair){
+  if(!pg || !pg.bg) return;
+  const im = bgCache.get(pg.bg.img); if(!im) return;
+  const { x, y, w, h } = pg.bg;
+  ctx.save();
+  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x, y, w, h);
+  ctx.drawImage(im, x, y, w, h);
+  ctx.lineWidth = hair; ctx.strokeStyle = '#D3D8DF'; ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 
 /* =========================================================
@@ -649,7 +685,7 @@ function renderBg(){
   c.setTransform(dpr,0,0,dpr,0,0);
   c.save(); c.shadowColor = 'rgba(10,16,28,.28)'; c.shadowBlur = 18; c.shadowOffsetY = 3;
   c.fillStyle = paperColor(nb); c.fillRect(view.tx, view.ty, PW*view.s, PH*view.s); c.restore();
-  c.save(); pageTx(c); clipPage(c); drawPaper(c, nb, 1/view.s); c.restore();
+  c.save(); pageTx(c); clipPage(c); drawPaper(c, nb, 1/view.s); drawBg(c, page, 1/view.s); c.restore();
 }
 function renderInk(){
   const c = cInk;
@@ -1321,6 +1357,7 @@ async function goPage(i){
   if(tok !== loadTok || !nb) return;
   $('#stage-msg').hidden = true;
   page = pg; fitView(); requestRender(); updUndo();
+  if(pg.bg && !bgCache.has(pg.bg.img)) ensureBg(pg).then(() => { if(page === pg) requestRender(); });
 }
 function updPagebar(){
   $('#page-num').textContent = 'Página ' + (pageIdx + 1) + ' de ' + nb.pages.length;
@@ -1626,6 +1663,7 @@ async function pagesOverview(){
       for(const it of items){
         if(!$('#dlg').open) return;
         const pg = await loadPage(it.id, n.id);
+        await ensureBg(pg);
         const nc = renderPageCanvas(pg, n, 240);
         it.open.replaceChild(nc, it.c);
       }
@@ -1652,6 +1690,7 @@ async function saveFile(filename, data){
 }
 async function exportPNG(){
   if(!page) return;
+  await ensureBg(page);
   const c = renderPageCanvas(page, nb, 2000);
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
   if(blob) saveFile(safeName(nb.title) + ' - página ' + (pageIdx+1) + '.png', blob);
@@ -1665,6 +1704,7 @@ async function exportPDF(){
     const doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
     for(let i=0;i<n.pages.length;i++){
       const pg = await loadPage(n.pages[i], n.id);
+      await ensureBg(pg);
       const c = renderPageCanvas(pg, n, 1654);
       if(i > 0) doc.addPage('a4', 'portrait');
       doc.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
