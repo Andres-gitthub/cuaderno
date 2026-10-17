@@ -45,3 +45,17 @@ test('eliminar una página con fondo borra su imagen; eliminar el cuaderno borra
   const keys = await idbKeys();
   assertEq(keys.filter(k => k.startsWith('img:')), [], 'no deben quedar imágenes');
 });
+
+test('setImg propaga un error de cuota y no lo guarda en memoria', async () => {
+  const orig = IDB.set;
+  IDB.set = () => Promise.reject(new DOMException('lleno', 'QuotaExceededError'));
+  let threw = null; try { await backend.setImg('q1', await noiseJpeg()); } catch(e){ threw = e; } finally { IDB.set = orig; }
+  assert(threw && threw.name === 'QuotaExceededError', 'debe lanzar QuotaExceededError');
+  assertEq(await backend.getImg('q1'), undefined);
+});
+test('setImg propaga un error sin identificar (null)', async () => {
+  const orig = IDB.set;
+  IDB.set = () => Promise.reject(null);
+  let threw = false; try { await backend.setImg('q2', await noiseJpeg()); } catch(e){ threw = true; } finally { IDB.set = orig; }
+  assert(threw, 'no debe fingir que se guardó');
+});

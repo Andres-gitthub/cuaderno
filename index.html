@@ -371,7 +371,7 @@ const IDB = (() => {
     return new Promise((res, rej) => {
       const tx = db.transaction('kv', mode), req = fn(tx.objectStore('kv'));
       tx.oncomplete = () => res(req ? req.result : undefined);
-      tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+      tx.onerror = e => rej(tx.error || (e && e.target && e.target.error) || new Error('IndexedDB')); tx.onabort = () => rej(tx.error);
     });
   }
   return {
@@ -393,7 +393,7 @@ function localBackend(){
     getImg: id => safe(() => IDB.get('img:'+id), () => mem.get('img:'+id)),
     setImg: async (id, v) => {   // un error de cuota se propaga: no se puede fingir que se guardó
       try { await IDB.set('img:'+id, v); }
-      catch(e){ if(e && e.name === 'QuotaExceededError') throw e; mem.set('img:'+id, v); }
+      catch(e){ if(!e || e.name === 'QuotaExceededError') throw e || new Error('IndexedDB'); mem.set('img:'+id, v); }
     },
     delImg: id => safe(() => IDB.del('img:'+id), () => { mem.delete('img:'+id); }),
   };
