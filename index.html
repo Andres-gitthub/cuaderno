@@ -1836,6 +1836,13 @@ async function exportBackup(){
       out.pages[id] = doc || { nb: n.id, strokes: [], updated: 0 };
     }
   }
+  out.images = {};
+  for(const doc of Object.values(out.pages)){
+    if(!doc || !doc.bg || out.images[doc.bg.img]) continue;
+    let blob = null;
+    try { blob = await backend.getImg(doc.bg.img); } catch(_){}
+    if(blob) out.images[doc.bg.img] = b64enc(new Uint8Array(await blob.arrayBuffer()));
+  }
   const d = new Date(), p2 = x => String(x).padStart(2, '0');
   const name = 'cuadernos-copia-' + d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()) + '.json';
   await saveFile(name, new Blob([JSON.stringify(out)], { type: 'application/json' }));
@@ -1843,6 +1850,7 @@ async function exportBackup(){
 function readBackup(text){
   const o = JSON.parse(text);
   if(!o || o.app !== BACKUP_APP || !o.profile || !Array.isArray(o.profile.notebooks) || !o.pages || typeof o.pages !== 'object') throw new Error('formato');
+  if(o.images !== undefined && (!o.images || typeof o.images !== 'object')) throw new Error('formato');
   return o;
 }
 async function restoreBackup(file){
@@ -1856,12 +1864,19 @@ async function restoreBackup(file){
   if(!ok) return;
   await settleWrites();
   const keep = new Set(Object.keys(o.pages));
+  const keepImg = new Set(Object.values(o.pages).filter(d => d && d.bg).map(d => d.bg.img));
   try {
+    for(const n of profile.notebooks) for(const id of n.pages){
+      let doc = pages.get(id);
+      if(!doc){ try { doc = await backend.getPage(id); } catch(_){} }
+      if(doc && doc.bg && !keepImg.has(doc.bg.img)) await backend.delImg(doc.bg.img);
+    }
+    for(const [id, b64] of Object.entries(o.images || {})) await backend.setImg(id, new Blob([b64dec(b64)], { type: 'image/jpeg' }));
     for(const n of profile.notebooks) for(const id of n.pages) if(!keep.has(id)) await backend.delPage(id);
     for(const [id, doc] of Object.entries(o.pages)) await backend.setPage(id, doc);
     await backend.setProfile(o.profile);
   } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
-  pages.clear(); hist.clear();
+  pages.clear(); hist.clear(); bgCache.clear();
   profile = normalizeProfile(o.profile); curFolder = null;
   updFingerBtn(); renderLibrary();
   toast('Copia restaurada.');
