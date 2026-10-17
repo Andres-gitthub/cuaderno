@@ -393,10 +393,7 @@ function localBackend(){
     setPage: (id, v) => safe(() => IDB.set('page:'+id, v), () => { mem.set('page:'+id, v); }),
     delPage: id => safe(() => IDB.del('page:'+id), () => { mem.delete('page:'+id); }),
     getImg: id => safe(() => IDB.get('img:'+id), () => mem.get('img:'+id)),
-    setImg: async (id, v) => {   // un error de cuota se propaga: no se puede fingir que se guardó
-      try { await IDB.set('img:'+id, v); }
-      catch(e){ if(!e || e.name === 'QuotaExceededError') throw e || new Error('IndexedDB'); mem.set('img:'+id, v); }
-    },
+    setImg: async (id, v) => { await IDB.set('img:'+id, v); },   // si falla, que se sepa: nunca fingir que se guardó
     delImg: id => safe(() => IDB.del('img:'+id), () => { mem.delete('img:'+id); }),
   };
 }
@@ -1699,6 +1696,7 @@ async function exportPNG(){
   await ensureBg(page);
   const c = renderPageCanvas(page, nb, 2000);
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  c.width = c.height = 0;
   if(blob) saveFile(safeName(nb.title) + ' - página ' + (pageIdx+1) + '.png', blob);
 }
 async function exportPDF(){
@@ -1714,6 +1712,7 @@ async function exportPDF(){
       const c = renderPageCanvas(pg, n, 1654);
       if(i > 0) doc.addPage('a4', 'portrait');
       doc.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+      c.width = c.height = 0;
     }
     const blob = doc.output('blob');
     $('#toast').classList.remove('show');
@@ -1788,14 +1787,15 @@ async function importPdf(file, target){
       const pg = { id: uid(), nb: n.id, strokes: [] };
       if(r){
         try { await backend.setImg(r.img, r.blob); }
-        catch(e){ full = true; break; }
+        catch(e){ full = (e && e.name === 'QuotaExceededError') ? 'quota' : 'error'; break; }
         pg.bg = { img: r.img, x: r.x, y: r.y, w: r.w, h: r.h };
       }
       pages.set(pg.id, pg); n.pages.push(pg.id); savePageNow(pg); done++;
     }
     if(isNew && !n.pages.length) profile.notebooks = profile.notebooks.filter(x => x !== n);
     n.updated = Date.now(); saveProfile();
-    if(full) toast('Sin espacio: se importaron ' + done + ' de ' + T + ' páginas.', 6000);
+    if(full === 'quota') toast('Sin espacio: se importaron ' + done + ' de ' + T + ' páginas.', 6000);
+    else if(full) toast('No se pudieron guardar las diapositivas: se importaron ' + done + ' de ' + T + ' páginas.', 6000);
     else if(failed) toast(failed === 1 ? '1 página no se pudo convertir.' : failed + ' páginas no se pudieron convertir.', 6000);
     else toast('PDF importado: ' + done + (done === 1 ? ' página' : ' páginas'));
     return { nb: n, first, done };
@@ -1808,7 +1808,7 @@ async function importPdfFlow(file, target){
   const r = await importPdf(file, target);
   if(!r || !r.done) return r;
   if(target.nb){ if(nb === target.nb){ updPagebar(); await goPage(r.first); } }
-  else { renderLibrary(); openNotebook(r.nb.id); }
+  else { if(nb && nb !== r.nb) closeNotebook(); renderLibrary(); openNotebook(r.nb.id); }
   return r;
 }
 let pdfTarget = null;
@@ -1878,7 +1878,9 @@ async function restoreBackup(file){
     await backend.setProfile(o.profile);
     for(const id of staleImg) await backend.delImg(id);
   } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
-  pages.clear(); hist.clear(); bgCache.clear();
+  pages.clear(); hist.clear();
+  for(const v of bgCache.values()) if(v && v.close) v.close();
+  bgCache.clear();
   profile = normalizeProfile(o.profile); curFolder = null;
   updFingerBtn(); renderLibrary();
   toast('Copia restaurada.');

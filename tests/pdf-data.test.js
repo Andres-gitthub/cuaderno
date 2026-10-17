@@ -59,3 +59,10 @@ test('setImg propaga un error sin identificar (null)', async () => {
   let threw = false; try { await backend.setImg('q2', await noiseJpeg()); } catch(e){ threw = true; } finally { IDB.set = orig; }
   assert(threw, 'no debe fingir que se guardó');
 });
+test('setImg propaga cualquier error de IndexedDB y no deja nada en memoria', async () => {
+  const orig = IDB.set;
+  IDB.set = () => Promise.reject(new DOMException('blob', 'UnknownError'));
+  let threw = false; try { await backend.setImg('q3', await noiseJpeg()); } catch(e){ threw = true; } finally { IDB.set = orig; }
+  assert(threw, 'debe lanzar');
+  assertEq(await backend.getImg('q3'), undefined);
+});

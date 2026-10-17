@@ -79,3 +79,10 @@ test('la biblioteca muestra «Importar PDF» y el menú del editor «Añadir PDF
   assert(dialogButton('Añadir PDF al final'), 'opción en el menú del editor');
   await clickDialog('Listo');
 });
+test('si no se pueden guardar las imágenes, la importación para y lo dice', async () => {
+  const orig = backend.setImg;
+  backend.setImg = () => Promise.reject(new DOMException('blob', 'UnknownError'));
+  try { await importPdf(new File([makeTestPdf()], 'Tema.pdf'), { folderId: null }); } finally { backend.setImg = orig; }
+  assertEq(document.querySelector('#toast').textContent, 'No se pudieron guardar las diapositivas: se importaron 0 de 3 páginas.');
+  assert(!profile.notebooks.some(n => n.title === 'Tema'), 'no debe quedar un cuaderno vacío');
+});
