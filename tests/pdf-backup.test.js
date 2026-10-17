@@ -67,3 +67,16 @@ test('readBackup rechaza images que no sea un objeto', async () => {
   let threw = false; try { readBackup(bad); } catch(e){ threw = true; }
   assert(threw, 'debe rechazarla');
 });
+
+test('si la restauración falla al escribir imágenes, los cuadernos actuales conservan sus diapositivas', async () => {
+  const other = { app: 'cuaderno-copia', v: 1, exported: '2026-10-17T10:00:00.000Z', images: { nuevo: b64enc(new Uint8Array(await (await noiseJpeg()).arrayBuffer())) },
+    profile: { v: 1, prefs: {}, notebooks: [{ id: 'nb9', title: 'Otro', cover: '#3A3F47', paper: 'lined', paperColor: 'white', pages: ['p9'], created: 1, updated: 2, lastPage: 0 }] },
+    pages: { p9: { nb: 'nb9', strokes: [], updated: 2, bg: { img: 'nuevo', x: 40, y: 40, w: 920, h: 517.5 } } } };
+  await importPdf(new File([makeTestPdf()], 'Tema.pdf'), { folderId: null }); await waitWrites();
+  const mine = (await idbKeys()).filter(k => k.startsWith('img:'));
+  const orig = backend.setImg;
+  backend.setImg = () => Promise.reject(new DOMException('lleno', 'QuotaExceededError'));
+  try { await restoreText(JSON.stringify(other)); } finally { backend.setImg = orig; }
+  const after = (await idbKeys()).filter(k => k.startsWith('img:'));
+  for(const k of mine) assert(after.includes(k), 'se perdió ' + k);
+});

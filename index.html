@@ -1866,15 +1866,17 @@ async function restoreBackup(file){
   const keep = new Set(Object.keys(o.pages));
   const keepImg = new Set(Object.values(o.pages).filter(d => d && d.bg).map(d => d.bg.img));
   try {
+    const staleImg = [];
     for(const n of profile.notebooks) for(const id of n.pages){
       let doc = pages.get(id);
       if(!doc){ try { doc = await backend.getPage(id); } catch(_){} }
-      if(doc && doc.bg && !keepImg.has(doc.bg.img)) await backend.delImg(doc.bg.img);
+      if(doc && doc.bg && !keepImg.has(doc.bg.img)) staleImg.push(doc.bg.img);
     }
     for(const [id, b64] of Object.entries(o.images || {})) await backend.setImg(id, new Blob([b64dec(b64)], { type: 'image/jpeg' }));
     for(const n of profile.notebooks) for(const id of n.pages) if(!keep.has(id)) await backend.delPage(id);
     for(const [id, doc] of Object.entries(o.pages)) await backend.setPage(id, doc);
     await backend.setProfile(o.profile);
+    for(const id of staleImg) await backend.delImg(id);
   } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
   pages.clear(); hist.clear(); bgCache.clear();
   profile = normalizeProfile(o.profile); curFolder = null;
