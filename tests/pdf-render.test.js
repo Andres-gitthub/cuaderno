@@ -62,3 +62,14 @@ test('el PDF exportado de páginas con diapositiva es más grande que sin ella',
   await exportPDF();
   assert(size > s0 * 1.5, 'con fondo ' + size + ' vs sin fondo ' + s0);
 });
+
+test('exportar o recorrer muchas páginas no quita de la caché la diapositiva abierta', async () => {
+  const n = await notebookWithBg(); openNotebook(n.id);
+  for(let i = 0; i < 100 && !(page && bgCache.has('red')); i++) await sleep(20);
+  for(let i = 0; i < BG_CACHE_MAX + 4; i++){
+    await backend.setImg('o' + i, await noiseJpeg(32, 18));
+    await ensureBg({ bg: { img: 'o' + i, x: 0, y: 0, w: 1, h: 1 } });
+  }
+  assert(bgCache.has('red'), 'la imagen de la página abierta debe seguir en caché');
+  assert(bgCache.size <= BG_CACHE_MAX, 'tamaño ' + bgCache.size);
+});

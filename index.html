@@ -632,10 +632,13 @@ async function ensureBg(pg){
   if(!blob) return;
   let im = null;
   try { im = await decodeImg(blob); } catch(_){ return; }
+  if(bgCache.has(id)){ if(im.close) im.close(); return; }
   bgCache.set(id, im);
+  const keepId = page && page.bg && page.bg.img;
   while(bgCache.size > BG_CACHE_MAX){
-    const [k, v] = bgCache.entries().next().value;
-    bgCache.delete(k); if(v && v.close) v.close();
+    const k = [...bgCache.keys()].find(x => x !== keepId);
+    if(k === undefined) break;
+    const v = bgCache.get(k); bgCache.delete(k); if(v && v.close) v.close();
   }
 }
 function drawBg(ctx, pg, hair){
