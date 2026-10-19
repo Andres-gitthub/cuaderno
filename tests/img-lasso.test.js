@@ -81,3 +81,33 @@ test('foco: tocar una imagen con la pluma escribe y no la selecciona', async () 
   assertEq(selection, null);
   assertEq(page.strokes.length, 1);
 });
+
+test('un toque con un poco de temblor solo selecciona: no mueve ni añade pasos', async () => {
+  const o = await pageWithImg();
+  const steps = H().u.length;
+  await drawWithPointer([[500, 350], [500 + 3/view.s, 350 + 2/view.s]]);
+  assert(selection && selection.imgIds.has(o.id), 'seleccionada');
+  assertEq([img(o.id).x, img(o.id).y], [300, 200]);
+  assertEq(H().u.length, steps);
+});
+
+test('deshacer devuelve una imagen aunque su dibujo haya salido de la caché', async () => {
+  const o = await pageWithImg();
+  await drawWithPointer([[500, 350], [500, 350]]);
+  document.querySelector('#selmenu [data-sel=del]').click();
+  bgCache.delete(o.img);
+  undo();
+  for(let i = 0; i < 100 && !bgCache.has(o.img); i++) await sleep(20);
+  assert(bgCache.has(o.img), 'debía volver a cargarse para dibujarla');
+});
+
+test('deshacer en mitad de un arrastre no deja el lazo en un estado roto', async () => {
+  await pageWithImg();
+  const st = document.querySelector('#stage'), r = st.getBoundingClientRect();
+  const ev = (type, x, y) => st.dispatchEvent(new PointerEvent(type, { pointerId: 9, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + view.tx + x*view.s, clientY: r.top + view.ty + y*view.s, bubbles: true, cancelable: true }));
+  ev('pointerdown', 500, 350); ev('pointermove', 560, 390);
+  undo();
+  ev('pointermove', 600, 400); ev('pointerup', 600, 400);
+  await sleep(20);
+  assertEq(act, null);
+});

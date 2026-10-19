@@ -452,7 +452,7 @@ const hist = new Map();    // id -> {u:[], r:[]}
 const dirty = new Map();   // id -> timer
 let nb = null, pageIdx = 0, page = null, loadTok = 0;
 let view = { s:1, tx:0, ty:0 };
-let selection = null;      // {ids:Set, bb:[...], dx, dy}
+let selection = null;      // {ids:Set, imgIds:Set, bb:[...], dx, dy, moving, rect?}
 const ui = { tool:'pen', color:{ pen:PEN_COLORS[0], hl:HL_COLORS[0] }, size:{ pen:1, hl:1, eraser:1 } };
 
 function defaultProfile(){ return { v:1, notebooks:[], folders:[], prefs:{} }; }
@@ -667,6 +667,7 @@ async function ensureImg(key, extraKeep){
 }
 async function ensureBg(pg){ if(pg && pg.bg) await ensureImg(pg.bg.img); }
 async function ensureImgs(pg){ const refs = imgRefs(pg), keep = new Set(refs); for(const k of refs) await ensureImg(k, keep); }
+function refreshImgs(pg){ if(pg && imgRefs(pg).some(k => !bgCache.has(k))) ensureImgs(pg).then(() => { if(page === pg) requestRender(); }); }
 function drawImgs(ctx, pg, skip){
   for(const o of pageImgs(pg)){
     if(skip && skip.has(o.id)) continue;
@@ -677,18 +678,21 @@ function drawImgs(ctx, pg, skip){
 const IMG_MAX_PX = 2000, IMG_QUALITY = 0.85, IMG_INSERT_FRAC = 0.6;
 // Lee la foto y la deja en JPEG sobre fondo blanco, como mucho de IMG_MAX_PX de lado. Lanza si no es una imagen.
 async function prepareImage(file){
-  const bmp = await createImageBitmap(file);
+  const url = URL.createObjectURL(file);
   try {
-    const k = Math.min(1, IMG_MAX_PX / Math.max(bmp.width, bmp.height));
-    const w = Math.max(1, Math.round(bmp.width*k)), h = Math.max(1, Math.round(bmp.height*k));
+    const im = new Image(); im.src = url; await im.decode();   // si no es una imagen, decode() falla
+    const W = im.naturalWidth, Hh = im.naturalHeight;
+    if(!W || !Hh) throw new Error('vacía');
+    const k = Math.min(1, IMG_MAX_PX / Math.max(W, Hh));
+    const w = Math.max(1, Math.round(W*k)), h = Math.max(1, Math.round(Hh*k));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     try {
-      const x = c.getContext('2d'); x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+      const x = c.getContext('2d'); x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, w, h); x.drawImage(im, 0, 0, w, h);
       const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', IMG_QUALITY));
       if(!blob) throw new Error('toBlob');
       return { blob, w, h };
     } finally { c.width = c.height = 0; }
-  } finally { if(bmp.close) bmp.close(); }
+  } finally { URL.revokeObjectURL(url); }
 }
 // Dónde va una imagen nueva: centrada en la zona visible, lado mayor ≤ 60 % del ancho, nunca más grande que su tamaño natural, dentro de la página
 function insertRect(pw, ph){
@@ -698,6 +702,7 @@ function insertRect(pw, ph){
   return { x: clamp(cx - w/2, 0, Math.max(0, PW - w)), y: clamp(cy - h/2, 0, Math.max(0, PH - h)), w, h };
 }
 function selectImg(o){ selection = { ids: new Set(), imgIds: new Set([o.id]), bb: [o.x, o.y, o.x + o.w, o.y + o.h], dx: 0, dy: 0, moving: false }; }
+const TAP_SLOP = 6;   // px de pantalla: un toque que se mueve menos solo selecciona
 const HANDLE_HIT = 22, IMG_MIN_SIDE = 40;   // radio para tocar un tirador (px de pantalla) y lado mínimo (unidades)
 function selImgIds(){ return (selection && selection.imgIds) || new Set(); }
 function imgAt(x, y){
@@ -740,6 +745,7 @@ async function insertImageFile(file){
   const prevImgs = pageImgs(pg);
   pg.imgs = [...prevImgs, o]; commitImgs(prevImgs);
   await ensureImg(key);
+  if(page !== pg) return o;
   setTool('lasso');
   selectImg(o);
   renderBg(); requestLive();
@@ -896,16 +902,18 @@ function commit(prevStrokes, prevImgs = pageImgs(page)){
 }
 function commitImgs(prevImgs){ commit(page.strokes, prevImgs); }
 function undo(){
+  abortAct();
   if(!page) return; const h = H(); if(!h.u.length) return;
   clearSelection(); h.r.push({ s: page.strokes, i: pageImgs(page) });
   const st = h.u.pop(); page.strokes = st.s; page.imgs = st.i;
-  renderBg(); renderInk(); renderLive(); markDirty(); updUndo();
+  renderBg(); renderInk(); renderLive(); refreshImgs(page); markDirty(); updUndo();
 }
 function redo(){
+  abortAct();
   if(!page) return; const h = H(); if(!h.r.length) return;
   clearSelection(); h.u.push({ s: page.strokes, i: pageImgs(page) });
   const st = h.r.pop(); page.strokes = st.s; page.imgs = st.i;
-  renderBg(); renderInk(); renderLive(); markDirty(); updUndo();
+  renderBg(); renderInk(); renderLive(); refreshImgs(page); markDirty(); updUndo();
 }
 function updUndo(){
   const h = page ? H() : { u:[], r:[] };
@@ -1020,8 +1028,10 @@ function onMove(e){
     for(const ev of evs){ const [x,y] = toPage(ev); const n = lasso.length; if(Math.hypot(x-lasso[n-2], y-lasso[n-1])*view.s > 2) lasso.push(x, y); }
     requestLive();
   } else if(act.kind === 'move'){
+    if(!act.far){ if(Math.hypot(e.clientX - act.cx0, e.clientY - act.cy0) <= TAP_SLOP) return; act.far = true; }
     const [x,y] = toPage(e); selection.dx = x - act.x0; selection.dy = y - act.y0; requestLive();
   } else if(act.kind === 'resize'){
+    if(!act.far){ if(Math.hypot(e.clientX - act.cx0, e.clientY - act.cy0) <= TAP_SLOP) return; act.far = true; }
     const [x,y] = toPage(e); const r = resizeRect(act.orig, act.handle, x, y); if(r) selection.rect = r; requestLive();
   }
 }
@@ -1054,16 +1064,16 @@ function startTool(e){
     const h = hitHandle(x, y);
     if(h >= 0){
       const o = soleImg();
-      act = { kind:'resize', pid:e.pointerId, ptype:e.pointerType, handle:h, id:o.id, orig:Object.assign({}, o) };
+      act = { kind:'resize', pid:e.pointerId, ptype:e.pointerType, handle:h, id:o.id, orig:Object.assign({}, o), cx0:e.clientX, cy0:e.clientY, far:false };
       selection.moving = true; selection.rect = { x:o.x, y:o.y, w:o.w, h:o.h }; renderBg(); requestLive();
     } else if(selection && inBB(selection.bb, x, y, 14/view.s)){
-      act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y };
+      act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y, cx0:e.clientX, cy0:e.clientY, far:false };
       selection.dx = 0; selection.dy = 0; selection.moving = true; renderBg(); renderInk(); requestLive();
     } else {
       const o = imgAt(x, y);
       if(o){
         selectImg(o);
-        act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y };
+        act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y, cx0:e.clientX, cy0:e.clientY, far:false };
         selection.moving = true; renderBg(); renderInk(); requestLive();
       } else {
         clearSelection();
@@ -1284,7 +1294,7 @@ function finishAct(e){
     requestLive();
   } else if(a.kind === 'move'){
     const { dx, dy } = selection; selection.moving = false;
-    if(Math.abs(dx) + Math.abs(dy) > 0.3){
+    if(a.far && Math.abs(dx) + Math.abs(dy) > 0.3){
       const prevS = page.strokes, prevI = pageImgs(page), im = selImgIds();
       page.strokes = prevS.map(s => selection.ids.has(s.id) ? moved(s, dx, dy) : s);
       if(im.size) page.imgs = prevI.map(o => im.has(o.id) ? Object.assign({}, o, { x: o.x + dx, y: o.y + dy }) : o);
@@ -1295,7 +1305,7 @@ function finishAct(e){
     renderBg(); renderInk(); requestLive();
   } else if(a.kind === 'resize'){
     const r = selection.rect, o = a.orig; selection.moving = false; selection.rect = null;
-    if(r && Math.abs(r.x - o.x) + Math.abs(r.y - o.y) + Math.abs(r.w - o.w) > 0.3){
+    if(a.far && r && Math.abs(r.x - o.x) + Math.abs(r.y - o.y) + Math.abs(r.w - o.w) > 0.3){
       const prevI = pageImgs(page);
       page.imgs = prevI.map(x => x.id === a.id ? Object.assign({}, x, r) : x);
       selection.bb = [r.x, r.y, r.x + r.w, r.y + r.h];
@@ -1366,6 +1376,7 @@ stage.addEventListener('wheel', e => {
 /* Selección: duplicar y borrar */
 $('#selmenu').addEventListener('pointerdown', e => e.stopPropagation());
 $('#selmenu').addEventListener('click', e => {
+  abortAct();
   const b = e.target.closest('button'); if(!b || !selection) return;
   const prevS = page.strokes, prevI = pageImgs(page), im = selImgIds();
   if(b.dataset.sel === 'del'){
@@ -1419,7 +1430,7 @@ function renderSwatches(){
   l.append(inp); box.append(l);
 }
 function pickColor(c){
-  if(ui.tool === 'lasso' && selection){
+  if(ui.tool === 'lasso' && selection && selection.ids.size){
     const prev = page.strokes;
     page.strokes = prev.map(s => selection.ids.has(s.id) && s.t === 'pen' ? makeStroke('pen', c, s.w, s.pts, s.id) : s);
     commit(prev); renderInk();
@@ -1535,7 +1546,7 @@ async function goPage(i){
   if(tok !== loadTok || !nb) return;
   $('#stage-msg').hidden = true;
   page = pg; fitView(); requestRender(); updUndo();
-  if(imgRefs(pg).some(k => !bgCache.has(k))) ensureImgs(pg).then(() => { if(page === pg) requestRender(); });
+  refreshImgs(pg);
 }
 function updPagebar(){
   $('#page-num').textContent = 'Página ' + (pageIdx + 1) + ' de ' + nb.pages.length;

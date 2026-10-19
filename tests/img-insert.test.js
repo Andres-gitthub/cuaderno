@@ -47,3 +47,9 @@ test('el menú de opciones ofrece «Insertar imagen»', async () => {
   assert(dialogButton('Insertar imagen'), 'falta la opción');
   await clickDialog('Listo');
 });
+
+test('una foto vertical conserva su orientación (alto mayor que ancho)', async () => {
+  await openTestNotebook();
+  const o = await insertImageFile(await imgFile(300, 600));
+  assert(o.h > o.w, o.w + '×' + o.h);
+});
