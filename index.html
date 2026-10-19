@@ -772,22 +772,39 @@ new ResizeObserver(() => {
 }).observe(stage);
 
 /* =========================================================
+   Imágenes insertadas en la página (objetos movibles)
+   ========================================================= */
+function pageImgs(pg){ return (pg && pg.imgs) || []; }
+function validImgObj(o){ return !!o && typeof o.id === 'string' && typeof o.img === 'string' && [o.x, o.y, o.w, o.h].every(Number.isFinite) && o.w > 0 && o.h > 0; }
+// Claves img: que usa una página: su diapositiva y sus imágenes insertadas
+function imgRefs(doc){
+  const out = [];
+  if(doc && doc.bg && typeof doc.bg.img === 'string') out.push(doc.bg.img);
+  for(const o of pageImgs(doc)) if(o && typeof o.img === 'string' && !out.includes(o.img)) out.push(o.img);
+  return out;
+}
+
+/* =========================================================
    Historial (deshacer / rehacer)
    ========================================================= */
 function H(){ let h = hist.get(page.id); if(!h){ h = { u:[], r:[] }; hist.set(page.id, h); } return h; }
-function commit(prev){
-  const h = H(); h.u.push(prev); if(h.u.length > 200) h.u.shift(); h.r.length = 0;
+// Cada paso del historial guarda el estado anterior de trazos e imágenes (referencias, nunca copias)
+function commit(prevStrokes, prevImgs = pageImgs(page)){
+  const h = H(); h.u.push({ s: prevStrokes, i: prevImgs }); if(h.u.length > 200) h.u.shift(); h.r.length = 0;
   markDirty(); updUndo();
 }
+function commitImgs(prevImgs){ commit(page.strokes, prevImgs); }
 function undo(){
   if(!page) return; const h = H(); if(!h.u.length) return;
-  clearSelection(); h.r.push(page.strokes); page.strokes = h.u.pop();
-  renderInk(); renderLive(); markDirty(); updUndo();
+  clearSelection(); h.r.push({ s: page.strokes, i: pageImgs(page) });
+  const st = h.u.pop(); page.strokes = st.s; page.imgs = st.i;
+  renderBg(); renderInk(); renderLive(); markDirty(); updUndo();
 }
 function redo(){
   if(!page) return; const h = H(); if(!h.r.length) return;
-  clearSelection(); h.u.push(page.strokes); page.strokes = h.r.pop();
-  renderInk(); renderLive(); markDirty(); updUndo();
+  clearSelection(); h.u.push({ s: page.strokes, i: pageImgs(page) });
+  const st = h.r.pop(); page.strokes = st.s; page.imgs = st.i;
+  renderBg(); renderInk(); renderLive(); markDirty(); updUndo();
 }
 function updUndo(){
   const h = page ? H() : { u:[], r:[] };
@@ -811,6 +828,7 @@ function savePageNow(pg){
   writer.schedule('page:' + pg.id, () => {
     const body = { nb: pg.nb, strokes: pg.strokes.map(encStroke), updated: Date.now() };
     if(pg.bg) body.bg = pg.bg;
+    if(pg.imgs && pg.imgs.length) body.imgs = pg.imgs.map(({ id, img, x, y, w, h }) => ({ id, img, x, y, w, h }));
     return backend.setPage(pg.id, body);
   });
 }
@@ -1340,16 +1358,17 @@ async function loadPage(id, nbId){
   if(pages.has(id)) return pages.get(id);
   const pg = { id, nb: nbId, strokes: doc && Array.isArray(doc.strokes) ? doc.strokes.map(decStroke).filter(Boolean) : [] };
   if(doc && doc.bg && typeof doc.bg.img === 'string') pg.bg = doc.bg;
+  if(doc && Array.isArray(doc.imgs)){ const v = doc.imgs.filter(validImgObj); if(v.length) pg.imgs = v; }
   pages.set(id, pg); return pg;
 }
-// Borra una página guardada y, si tiene diapositiva de fondo, también su imagen
+// Borra una página guardada y los píxeles de su diapositiva y de sus imágenes
 function dropPageData(id){
   const pg = pages.get(id);
   clearTimeout(dirty.get(id)); dirty.delete(id); pages.delete(id); hist.delete(id);
   writer.schedule('page:' + id, async () => {
     let doc = pg;
     if(!doc){ try { doc = await backend.getPage(id); } catch(_){} }
-    if(doc && doc.bg) await backend.delImg(doc.bg.img);
+    for(const k of imgRefs(doc)) await backend.delImg(k);
     return backend.delPage(id);
   });
 }

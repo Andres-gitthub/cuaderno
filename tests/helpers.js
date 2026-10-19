@@ -113,3 +113,13 @@ window.idbKeys = () => new Promise((res, rej) => {
   r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess = () => { res(q.result.map(String)); r.result.close(); }; q.onerror = () => rej(q.error); };
   r.onerror = () => rej(r.error);
 });
+
+// ---- Imágenes insertadas ----
+window.addTestImg = async (pg, rect = { x: 300, y: 200, w: 400, h: 300 }, rgb = [30, 60, 220]) => {
+  const key = 'k' + uid();
+  await backend.setImg(key, await noiseJpeg(160, 120, rgb));
+  const o = Object.assign({ id: uid(), img: key }, rect);
+  pg.imgs = [...(pg.imgs || []), o];
+  return o;
+};
+window.imgFile = async (w, h, rgb = [30, 60, 220], name = 'foto.jpg') => new File([await noiseJpeg(w, h, rgb)], name, { type: 'image/jpeg' });
