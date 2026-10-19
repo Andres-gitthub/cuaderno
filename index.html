@@ -2113,23 +2113,35 @@ function confirmBox(title, text, ok){
    ========================================================= */
 const IMG_GC_DELAY = 5000, IMG_GC_EVERY = 24*3600*1000;
 let gcTimer = 0, restoring = false;
-// Borra los píxeles que no usa ninguna página ni ningún paso del historial de esta sesión
+// Borra los píxeles que no usa ninguna página ni ningún paso del historial de esta sesión.
+// Ante cualquier duda (perfil sin cargar, página ilegible, escritura en marcha) no borra nada.
 async function collectImgGarbage(force){
   if(!profile) return 0;
   if(!force && Date.now() - (prefs().imgGcAt || 0) < IMG_GC_EVERY) return 0;
-  if(importing || restoring || writer.busy() || hasDirty()) return 0;
+  const busy = () => importing || restoring || writer.busy() || hasDirty();
+  if(busy()) return 0;
+  let keys, stored;
+  try {
+    keys = (await IDB.keys()).map(String).filter(k => k.startsWith('img:')).map(k => k.slice(4));   // primero la lista: lo que se escriba después no es candidato
+    stored = await IDB.get('profile');
+  } catch(_){ return 0; }
+  if(!stored || !Array.isArray(stored.notebooks)) return 0;
+  const memIds = new Set(profile.notebooks.map(n => n.id));
+  if(stored.notebooks.some(n => !memIds.has(n.id))) return 0;   // el perfil en memoria no es el guardado
   const used = new Set();
   try {
     for(const n of profile.notebooks) for(const id of n.pages){
-      const doc = pages.has(id) ? pages.get(id) : await backend.getPage(id);
+      const doc = pages.has(id) ? pages.get(id) : await IDB.get('page:' + id);
+      if(!doc) return 0;                                           // página ilegible o ausente: no arriesgar
       for(const k of imgRefs(doc)) used.add(k);
     }
   } catch(_){ return 0; }
   for(const h of hist.values()) for(const st of h.u.concat(h.r)) for(const o of (st && st.i) || []) used.add(o.img);
   let removed = 0;
-  for(const k of await backend.listImgs()){
+  for(const k of keys){
     if(used.has(k)) continue;
-    try { await backend.delImg(k); removed++; } catch(_){ break; }
+    if(busy()) break;                                              // algo empezó a escribir: parar
+    try { await IDB.del('img:' + k); removed++; } catch(_){ break; }
   }
   prefs().imgGcAt = Date.now(); saveProfileSoon();
   return removed;

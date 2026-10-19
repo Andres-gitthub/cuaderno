@@ -54,3 +54,32 @@ test('restaurar borra las imágenes insertadas de páginas que desaparecen', asy
   const p = restoreBackup(new File([empty], 'vacia.json')); await clickDialog('Restaurar'); await p; await waitWrites();
   assertEq(await backend.getImg(o.img), undefined);
 });
+
+test('foco: si el perfil en memoria no es el guardado, la limpieza no borra ni guarda nada', async () => {
+  const { o } = await savedImgPage(); closeNotebook(); await waitWrites();
+  await backend.setImg('korphan', await noiseJpeg());
+  const real = profile; profile = normalizeProfile(null);   // como si el perfil no se hubiera podido cargar
+  let r; try { r = await collectImgGarbage(true); } finally { profile = real; }
+  assertEq(r, 0);
+  assert(await backend.getImg(o.img) && await backend.getImg('korphan'), 'no debía borrar nada');
+  assertEq((await IDB.get('profile')).notebooks.length, 1);
+});
+
+test('foco: si una página no se puede leer, la limpieza no borra nada', async () => {
+  const { o } = await savedImgPage(); closeNotebook(); await waitWrites(); pages.clear();
+  await backend.setImg('korphan', await noiseJpeg());
+  const orig = IDB.get; IDB.get = k => String(k).startsWith('page:') ? Promise.reject(new Error('io')) : orig(k);
+  let r; try { r = await collectImgGarbage(true); } finally { IDB.get = orig; }
+  assertEq(r, 0);
+  assert(await backend.getImg(o.img) && await backend.getImg('korphan'), 'no debía borrar nada');
+});
+
+test('foco: si algo empieza a escribir durante la limpieza, se detiene', async () => {
+  await savedImgPage(); closeNotebook(); await waitWrites();
+  await backend.setImg('kz1', await noiseJpeg()); await backend.setImg('kz2', await noiseJpeg());
+  const orig = IDB.del; let n = 0;
+  IDB.del = k => { if(++n === 1) importing = true; return orig(k); };
+  let r; try { r = await collectImgGarbage(true); } finally { IDB.del = orig; importing = false; }
+  assertEq(r, 1);
+  assertEq([!!(await backend.getImg('kz1')), !!(await backend.getImg('kz2'))].filter(Boolean).length, 1);
+});
