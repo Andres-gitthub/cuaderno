@@ -11,7 +11,7 @@ Importa diapositivas en PDF y escribe encima.
 2. En el repositorio, ve a **Settings → Pages**, elige **Deploy from a branch**, la rama `main` y la carpeta `/ (root)`.
 3. La app quedará en `https://TU-USUARIO.github.io/NOMBRE-DEL-REPO/`.
 
-Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v6` a `v7`). Así el iPad descarga la versión nueva.
+Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v7` a `v8`). Así el iPad descarga la versión nueva.
 
 ## Instalar en el iPad
 

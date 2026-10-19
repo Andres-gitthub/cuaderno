@@ -58,3 +58,12 @@ test('un garabato plano borra las letras que sobresalen por arriba y por abajo',
   const ids = scribbleTargets(flat(zigzag(295, 306, 130, 8, 3)), letters);
   assertEq([...ids].sort(), letters.map(s => s.id).sort());
 });
+
+test('scribbleStats explica la decisión con los mismos resultados que isScribble', async () => {
+  const z = scribbleStats(flat(zigzag(300, 300, 120, 30, 3)));
+  assertEq([z.ok, z.rev], [true, 2]);
+  assert(z.extent > 100 && z.swing >= 8 && z.density > 2.5, JSON.stringify(z));
+  const m = scribbleStats(flat(cursiveM(100, 100, 4)));
+  assertEq([m.ok, m.rev], [false, 0]);
+  for(const P of [flat(zigzag(300, 300, 60, 20, 5)), flat(cursiveW(100, 100, 4)), flat([[10, 10]])]) assertEq(scribbleStats(P).ok, isScribble(P));
+});

@@ -1016,15 +1016,16 @@ function principalAxis(P){
   const a = 0.5*Math.atan2(2*sxy, sxx - syy);
   return [Math.cos(a), Math.sin(a)];
 }
-function isScribble(P){
-  const n = P.length/3;
-  if(n < SCRIBBLE_MIN_PTS) return false;
+// Detector de garabatos con sus números (el modo ?diag los muestra). ok = es un garabato.
+function scribbleStats(P){
+  const n = P.length/3, st = { ok: false, n, rev: 0, extent: 0, swing: 0, density: 0 };
+  if(n < SCRIBBLE_MIN_PTS) return st;
   const [ax, ay] = principalAxis(P);
   const proj = new Float64Array(n); let lo = Infinity, hi = -Infinity;
   for(let i=0;i<n;i++){ const t = P[i*3]*ax + P[i*3+1]*ay; proj[i] = t; if(t < lo) lo = t; if(t > hi) hi = t; }
-  const extent = hi - lo;
-  if(!(extent >= SCRIBBLE_MIN_SWING*2)) return false;
-  const swing = Math.max(SCRIBBLE_MIN_SWING, extent*SCRIBBLE_SWING_FRAC);
+  const extent = hi - lo; st.extent = extent;
+  if(!(extent >= SCRIBBLE_MIN_SWING*2)) return st;
+  const swing = Math.max(SCRIBBLE_MIN_SWING, extent*SCRIBBLE_SWING_FRAC); st.swing = swing;
   let dir = 0, hiE = proj[0], loE = proj[0], rev = 0;
   for(let i=1;i<n;i++){
     const t = proj[i];
@@ -1038,10 +1039,13 @@ function isScribble(P){
       if(t < loE) loE = t; else if(t - loE >= swing){ dir = 1; hiE = t; rev++; }
     }
   }
-  if(rev < SCRIBBLE_MIN_REVERSALS) return false;
+  st.rev = rev;
   const b = bboxOf(P, 0), diag = Math.hypot(b[2]-b[0], b[3]-b[1]);
-  return diag > 0 && strokeLength(P) >= SCRIBBLE_MIN_DENSITY*diag;
+  st.density = diag > 0 ? strokeLength(P) / diag : 0;
+  st.ok = rev >= SCRIBBLE_MIN_REVERSALS && diag > 0 && st.density >= SCRIBBLE_MIN_DENSITY;
+  return st;
 }
+function isScribble(P){ return scribbleStats(P).ok; }
 function convexHull(P){
   const pts = [];
   for(let i=0;i<P.length;i+=3) pts.push([P[i], P[i+1]]);
@@ -1973,8 +1977,31 @@ async function init(){
 function startDiag(){
   if($('#diag')) return;
   const box = document.createElement('div'); box.id = 'diag';
-  box.style.cssText = 'position:fixed;left:8px;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:40;background:rgba(0,0,0,.78);color:#fff;font:12px/1.4 ui-monospace,Menlo,monospace;padding:6px 8px;border-radius:8px;pointer-events:none;white-space:pre';
+  box.style.cssText = 'position:fixed;left:8px;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:40;background:rgba(0,0,0,.78);color:#fff;font:12px/1.4 ui-monospace,Menlo,monospace;padding:6px 8px;border-radius:8px;pointer-events:none;max-width:calc(100vw - 16px)';
+  const txt = document.createElement('div'); txt.style.whiteSpace = 'pre';
+  const scrib = document.createElement('div'); scrib.style.marginTop = '4px';
+  const copy = document.createElement('button'); copy.id = 'diag-copy'; copy.type = 'button'; copy.textContent = 'Copiar último trazo';
+  copy.style.cssText = 'pointer-events:auto;margin-top:6px;font:inherit;padding:4px 8px;border:0;border-radius:6px;background:#fff;color:#000';
+  box.append(txt, scrib, copy);
   document.body.append(box);
+  // Último trazo de pluma: qué decidió el detector de garabatos y con qué números
+  let lastStroke = null;
+  const realTry = tryScribbleErase;
+  tryScribbleErase = function(c){
+    const before = page ? page.strokes.length : 0, st = scribbleStats(c.pts), r = realTry(c);
+    lastStroke = { t: c.t, stats: st, pts: Array.from(c.pts, v => Math.round(v*10)/10) };
+    scrib.textContent = 'garabato: ' + (st.ok ? 'sí' : 'no') + ' · cambios ' + st.rev + ' (mín ' + SCRIBBLE_MIN_REVERSALS + ')'
+      + ' · ancho ' + st.extent.toFixed(0) + ' · umbral ' + st.swing.toFixed(0) + ' · densidad ' + st.density.toFixed(2)
+      + ' · borró ' + (r && page ? before - page.strokes.length : 0);
+    return r;
+  };
+  copy.onclick = async () => {
+    if(!lastStroke) return;
+    const s = JSON.stringify(lastStroke);
+    try { await navigator.clipboard.writeText(s); }
+    catch(_){ const ta = document.createElement('textarea'); ta.value = s; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    copy.textContent = 'Copiado ✓'; setTimeout(() => { copy.textContent = 'Copiar último trazo'; }, 1500);
+  };
   let evts = 0, coal = 0, frames = [], paint = [], last = performance.now(), tick = performance.now();
   stage.addEventListener('pointermove', e => {
     if(!act) return;
@@ -1987,7 +2014,7 @@ function startDiag(){
     last = now;
     if(now - tick >= 1000){
       const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, max = a => a.length ? Math.max(...a) : 0;
-      box.textContent = 'eventos/s ' + evts + ' (con agrupados ' + coal + ')\n'
+      txt.textContent = 'eventos/s ' + evts + ' (con agrupados ' + coal + ')\n'
         + 'fotograma ' + avg(frames).toFixed(1) + ' ms · peor ' + max(frames).toFixed(1) + ' ms\n'
         + 'pintar en vivo ' + avg(paint).toFixed(2) + ' ms · peor ' + max(paint).toFixed(2) + ' ms\n'
         + 'lienzo ' + cvLive.width + '×' + cvLive.height + ' · dpr ' + dpr;

@@ -57,3 +57,17 @@ test('el modo diagnóstico muestra eventos y fotogramas mientras se escribe', as
   const t = document.querySelector('#diag').textContent;
   assert(/eventos\/s/.test(t) && /fotograma/.test(t) && /pintar/.test(t), 'texto del panel: ' + t);
 });
+
+test('el modo diagnóstico muestra el detector de garabatos y copia el último trazo', async () => {
+  await openTestNotebook([penStroke(densify([[300, 315], [420, 315]]))]);
+  startDiag();
+  await drawWithPointer(zigzag(295, 300, 130, 30, 3));
+  const t = document.querySelector('#diag').textContent;
+  assert(/garabato: sí/.test(t) && /cambios 2/.test(t) && /borró 1/.test(t), 'texto del panel: ' + t);
+  let copied = null;
+  const orig = navigator.clipboard && navigator.clipboard.writeText;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async s => { copied = s; } } });
+  document.querySelector('#diag-copy').click(); await sleep(50);
+  const o = JSON.parse(copied);
+  assert(Array.isArray(o.pts) && o.pts.length > 30 && o.stats && o.stats.rev === 2, 'JSON copiado: ' + (copied || '').slice(0, 80));
+});
