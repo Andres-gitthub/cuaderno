@@ -542,13 +542,31 @@ function hlPath(P){
   return p;
 }
 function strokePath(s){ return s.path || (s.path = s.t === 'hl' ? hlPath(s.pts) : penPath(s.pts, s.w)); }
+// Relleno interior de la pluma: segmentos redondeados un poco más finos que el trazo, agrupados por grosor.
+// El contorno de penPath se cruza consigo mismo en giros cerrados y deja huecos; esto los tapa sin cambiar el borde.
+function strokeCore(s){
+  if(s.core) return s.core;
+  const P = s.pts, n = P.length/3, groups = new Map();
+  for(let i=0;i<n-1;i++){
+    const r = Math.min(radius(s.w, P[i*3+2]), radius(s.w, P[i*3+5]));
+    const lw = Math.max(0.5, Math.floor(r*2*0.9*2)/2);   // múltiplos de 0,5, siempre por debajo del grosor real
+    let p = groups.get(lw); if(!p){ p = new Path2D(); groups.set(lw, p); }
+    p.moveTo(P[i*3], P[i*3+1]); p.lineTo(P[i*3+3], P[i*3+4]);
+  }
+  return (s.core = [...groups]);
+}
 function drawStroke(ctx, s){
   const path = strokePath(s);
   if(s.t === 'hl'){
     ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = .55;
     ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.stroke(path); ctx.restore();
-  } else { ctx.fillStyle = s.c; ctx.fill(path); }
+  } else {
+    ctx.fillStyle = s.c; ctx.fill(path);
+    ctx.save(); ctx.strokeStyle = s.c; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for(const [lw, p] of strokeCore(s)){ ctx.lineWidth = lw; ctx.stroke(p); }
+    ctx.restore();
+  }
 }
 function drawStrokes(ctx, strokes, skip){
   for(const s of strokes) if(!skip || !skip.has(s.id)) drawStroke(ctx, s);
@@ -1949,6 +1967,38 @@ async function init(){
   renderLibrary();
   $('#boot').hidden = true;
 }
+/* =========================================================
+   Modo diagnóstico (?diag): eventos del lápiz y tiempos de pintado
+   ========================================================= */
+function startDiag(){
+  if($('#diag')) return;
+  const box = document.createElement('div'); box.id = 'diag';
+  box.style.cssText = 'position:fixed;left:8px;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:40;background:rgba(0,0,0,.78);color:#fff;font:12px/1.4 ui-monospace,Menlo,monospace;padding:6px 8px;border-radius:8px;pointer-events:none;white-space:pre';
+  document.body.append(box);
+  let evts = 0, coal = 0, frames = [], paint = [], last = performance.now(), tick = performance.now();
+  stage.addEventListener('pointermove', e => {
+    if(!act) return;
+    evts++; coal += (e.getCoalescedEvents && e.getCoalescedEvents().length) || 1;
+  }, { passive: true });
+  const measured = renderLive;
+  renderLive = function(){ const t0 = performance.now(); measured(); paint.push(performance.now() - t0); };
+  const loop = now => {
+    if(act) frames.push(now - last);
+    last = now;
+    if(now - tick >= 1000){
+      const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, max = a => a.length ? Math.max(...a) : 0;
+      box.textContent = 'eventos/s ' + evts + ' (con agrupados ' + coal + ')\n'
+        + 'fotograma ' + avg(frames).toFixed(1) + ' ms · peor ' + max(frames).toFixed(1) + ' ms\n'
+        + 'pintar en vivo ' + avg(paint).toFixed(2) + ' ms · peor ' + max(paint).toFixed(2) + ' ms\n'
+        + 'lienzo ' + cvLive.width + '×' + cvLive.height + ' · dpr ' + dpr;
+      evts = 0; coal = 0; frames = []; paint = []; tick = now;
+    }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
+if(/[?&]diag\b/.test(location.search)) startDiag();
+
 init();
 if('serviceWorker' in navigator) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 </script>
