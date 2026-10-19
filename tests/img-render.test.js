@@ -49,3 +49,14 @@ test('exportar la página en PNG y el cuaderno en PDF incluye la imagen', async 
   await exportPDF();
   assert(size > plain * 1.5, 'PDF con imágenes ' + size + ' vs sin ellas ' + plain);
 });
+
+test('preparar otra página no expulsa sus imágenes aunque la abierta tenga muchas', async () => {
+  await openTestNotebook(); addPage(); await goPage(0);
+  for(let i = 0; i < BG_CACHE_MAX; i++) await addTestImg(page, { x: 20 + i*40, y: 50, w: 30, h: 30 });
+  await ensureImgs(page);
+  const other = pages.get(nb.pages[1]);
+  for(let i = 0; i < 3; i++) await addTestImg(other, { x: 20 + i*40, y: 400, w: 30, h: 30 });
+  await ensureImgs(other);
+  assert(other.imgs.every(o => bgCache.has(o.img)), 'faltan imágenes de la página preparada');
+  assert(page.imgs.every(o => bgCache.has(o.img)), 'faltan imágenes de la página abierta');
+});

@@ -642,7 +642,7 @@ async function decodeImg(blob){
   finally { URL.revokeObjectURL(url); }
 }
 // Asegura en caché la imagen `key`. Nunca expulsa ninguna imagen de la página abierta.
-async function ensureImg(key){
+async function ensureImg(key, extraKeep){
   if(typeof key !== 'string') return;
   if(bgCache.has(key)){ const v = bgCache.get(key); bgCache.delete(key); bgCache.set(key, v); return; }
   let blob = null;
@@ -653,6 +653,7 @@ async function ensureImg(key){
   if(bgCache.has(key)){ if(im.close) im.close(); return; }
   bgCache.set(key, im);
   const keep = new Set(imgRefs(page));
+  if(extraKeep) for(const x of extraKeep) keep.add(x);
   while(bgCache.size > BG_CACHE_MAX){
     const k = [...bgCache.keys()].find(x => !keep.has(x));
     if(k === undefined) break;
@@ -660,7 +661,7 @@ async function ensureImg(key){
   }
 }
 async function ensureBg(pg){ if(pg && pg.bg) await ensureImg(pg.bg.img); }
-async function ensureImgs(pg){ for(const k of imgRefs(pg)) await ensureImg(k); }
+async function ensureImgs(pg){ const refs = imgRefs(pg), keep = new Set(refs); for(const k of refs) await ensureImg(k, keep); }
 function drawImgs(ctx, pg, skip){
   for(const o of pageImgs(pg)){
     if(skip && skip.has(o.id)) continue;
