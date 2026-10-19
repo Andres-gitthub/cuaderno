@@ -123,3 +123,6 @@ window.addTestImg = async (pg, rect = { x: 300, y: 200, w: 400, h: 300 }, rgb = 
   return o;
 };
 window.imgFile = async (w, h, rgb = [30, 60, 220], name = 'foto.jpg') => new File([await noiseJpeg(w, h, rgb)], name, { type: 'image/jpeg' });
+
+// La limpieza automática de imágenes huérfanas se programa al arrancar: en las pruebas se lanza a mano
+if(typeof gcTimer !== 'undefined') clearTimeout(gcTimer);

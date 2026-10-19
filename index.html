@@ -381,6 +381,7 @@ const IDB = (() => {
     get: k => run('readonly', s => s.get(k)),
     set: (k, v) => run('readwrite', s => s.put(v, k)),
     del: k => run('readwrite', s => s.delete(k)),
+    keys: () => run('readonly', s => s.getAllKeys()),
   };
 })();
 function localBackend(){
@@ -396,6 +397,8 @@ function localBackend(){
     getImg: id => safe(() => IDB.get('img:'+id), () => mem.get('img:'+id)),
     setImg: async (id, v) => { await IDB.set('img:'+id, v); },   // si falla, que se sepa: nunca fingir que se guardó
     delImg: id => safe(() => IDB.del('img:'+id), () => { mem.delete('img:'+id); }),
+    listImgs: () => safe(async () => (await IDB.keys()).map(String).filter(k => k.startsWith('img:')).map(k => k.slice(4)),
+      () => [...mem.keys()].filter(k => k.startsWith('img:')).map(k => k.slice(4))),
   };
 }
 async function withRetry(fn){
@@ -2011,10 +2014,12 @@ async function exportBackup(){
   }
   out.images = {};
   for(const doc of Object.values(out.pages)){
-    if(!doc || !doc.bg || out.images[doc.bg.img]) continue;
-    let blob = null;
-    try { blob = await backend.getImg(doc.bg.img); } catch(_){}
-    if(blob) out.images[doc.bg.img] = b64enc(new Uint8Array(await blob.arrayBuffer()));
+    for(const k of imgRefs(doc)){
+      if(out.images[k]) continue;
+      let blob = null;
+      try { blob = await backend.getImg(k); } catch(_){}
+      if(blob) out.images[k] = b64enc(new Uint8Array(await blob.arrayBuffer()));
+    }
   }
   const d = new Date(), p2 = x => String(x).padStart(2, '0');
   const name = 'cuadernos-copia-' + d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()) + '.json';
@@ -2035,23 +2040,23 @@ async function restoreBackup(file){
     'Se sustituirán los cuadernos de este dispositivo por ' + (k === 1 ? 'el cuaderno' : 'los ' + k + ' cuadernos') + ' de la copia. Lo que no esté en la copia se perderá.',
     'Restaurar');
   if(!ok) return;
-  await settleWrites();
+  await settleWrites(); restoring = true;
   const keep = new Set(Object.keys(o.pages));
-  const keepImg = new Set(Object.values(o.pages).filter(d => d && d.bg).map(d => d.bg.img));
+  const keepImg = new Set(Object.values(o.pages).flatMap(d => imgRefs(d)));
   try {
     const staleImg = [];
     for(const n of profile.notebooks) for(const id of n.pages){
       let doc = pages.get(id);
       if(!doc){ try { doc = await backend.getPage(id); } catch(_){} }
-      if(doc && doc.bg && !keepImg.has(doc.bg.img)) staleImg.push(doc.bg.img);
+      for(const k of imgRefs(doc)) if(!keepImg.has(k)) staleImg.push(k);
     }
     for(const [id, b64] of Object.entries(o.images || {})) await backend.setImg(id, new Blob([b64dec(b64)], { type: 'image/jpeg' }));
     for(const n of profile.notebooks) for(const id of n.pages) if(!keep.has(id)) await backend.delPage(id);
     for(const [id, doc] of Object.entries(o.pages)) await backend.setPage(id, doc);
     await backend.setProfile(o.profile);
     for(const id of staleImg) await backend.delImg(id);
-  } catch(e){ toast('No se pudo restaurar la copia.', 5000); return; }
-  pages.clear(); hist.clear();
+  } catch(e){ restoring = false; toast('No se pudo restaurar la copia.', 5000); return; }
+  restoring = false; pages.clear(); hist.clear();
   for(const v of bgCache.values()) if(v && v.close) v.close();
   bgCache.clear();
   profile = normalizeProfile(o.profile); curFolder = null;
@@ -2104,6 +2109,33 @@ function confirmBox(title, text, ok){
 }
 
 /* =========================================================
+   Limpieza de imágenes huérfanas (como mucho una vez al día)
+   ========================================================= */
+const IMG_GC_DELAY = 5000, IMG_GC_EVERY = 24*3600*1000;
+let gcTimer = 0, restoring = false;
+// Borra los píxeles que no usa ninguna página ni ningún paso del historial de esta sesión
+async function collectImgGarbage(force){
+  if(!profile) return 0;
+  if(!force && Date.now() - (prefs().imgGcAt || 0) < IMG_GC_EVERY) return 0;
+  if(importing || restoring || writer.busy() || hasDirty()) return 0;
+  const used = new Set();
+  try {
+    for(const n of profile.notebooks) for(const id of n.pages){
+      const doc = pages.has(id) ? pages.get(id) : await backend.getPage(id);
+      for(const k of imgRefs(doc)) used.add(k);
+    }
+  } catch(_){ return 0; }
+  for(const h of hist.values()) for(const st of h.u.concat(h.r)) for(const o of (st && st.i) || []) used.add(o.img);
+  let removed = 0;
+  for(const k of await backend.listImgs()){
+    if(used.has(k)) continue;
+    try { await backend.delImg(k); removed++; } catch(_){ break; }
+  }
+  prefs().imgGcAt = Date.now(); saveProfileSoon();
+  return removed;
+}
+
+/* =========================================================
    Arranque
    ========================================================= */
 async function init(){
@@ -2121,6 +2153,7 @@ async function init(){
   setTool(ui.tool, true); updFingerBtn(); setStatus('saved');
   renderLibrary();
   $('#boot').hidden = true;
+  gcTimer = setTimeout(() => { collectImgGarbage(false).catch(() => {}); }, IMG_GC_DELAY);
 }
 /* =========================================================
    Modo diagnóstico (?diag): eventos del lápiz y tiempos de pintado
