@@ -83,3 +83,27 @@ test('foco: si algo empieza a escribir durante la limpieza, se detiene', async (
   assertEq(r, 1);
   assertEq([!!(await backend.getImg('kz1')), !!(await backend.getImg('kz2'))].filter(Boolean).length, 1);
 });
+
+test('una página en blanco nunca guardada no bloquea la limpieza', async () => {
+  await savedImgPage(); addPage(); closeNotebook(); await waitWrites();   // la página nueva no se ha escrito en IndexedDB
+  await backend.setImg('korphan', await noiseJpeg());
+  assertEq(await collectImgGarbage(true), 1);
+});
+
+test('foco: si hay páginas guardadas que no son de ningún cuaderno, la limpieza no borra nada', async () => {
+  const { o } = await savedImgPage(); closeNotebook(); await waitWrites();
+  await IDB.set('page:huerfana', { nb: 'x', strokes: [], updated: 1, imgs: [{ id: 'a', img: o.img, x: 0, y: 0, w: 10, h: 10 }] });
+  await backend.setImg('korphan', await noiseJpeg());
+  assertEq(await collectImgGarbage(true), 0);
+  assert(await backend.getImg('korphan'), 'no debía borrar');
+});
+
+test('foco: cualquier escritura durante la limpieza la detiene', async () => {
+  await savedImgPage(); closeNotebook(); await waitWrites(); pages.clear();
+  await backend.setImg('kz1', await noiseJpeg());
+  const orig = IDB.get; let once = false;
+  IDB.get = k => { if(String(k).startsWith('page:') && !once){ once = true; dataEpoch++; } return orig(k); };
+  let r; try { r = await collectImgGarbage(true); } finally { IDB.get = orig; }
+  assertEq(r, 0);
+  assert(await backend.getImg('kz1'), 'no debía borrar');
+});
