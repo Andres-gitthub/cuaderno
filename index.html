@@ -226,6 +226,7 @@ dialog::backdrop{background:rgba(10,14,22,.45)}
         <button class="btn" id="btn-restore">Restaurar copia</button>
         <input type="file" id="restore-file" accept=".json,application/json" hidden>
         <input type="file" id="pdf-file" accept="application/pdf,.pdf" hidden>
+        <input type="file" id="img-file" accept="image/*" hidden>
       </div>
     </header>
     <div class="lib-body">
@@ -668,6 +669,50 @@ function drawImgs(ctx, pg, skip){
     const im = bgCache.get(o.img); if(im) ctx.drawImage(im, o.x, o.y, o.w, o.h);
   }
 }
+/* Insertar imagen */
+const IMG_MAX_PX = 2000, IMG_QUALITY = 0.85, IMG_INSERT_FRAC = 0.6;
+// Lee la foto y la deja en JPEG sobre fondo blanco, como mucho de IMG_MAX_PX de lado. Lanza si no es una imagen.
+async function prepareImage(file){
+  const bmp = await createImageBitmap(file);
+  try {
+    const k = Math.min(1, IMG_MAX_PX / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width*k)), h = Math.max(1, Math.round(bmp.height*k));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    try {
+      const x = c.getContext('2d'); x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', IMG_QUALITY));
+      if(!blob) throw new Error('toBlob');
+      return { blob, w, h };
+    } finally { c.width = c.height = 0; }
+  } finally { if(bmp.close) bmp.close(); }
+}
+// Dónde va una imagen nueva: centrada en la zona visible, lado mayor ≤ 60 % del ancho, nunca más grande que su tamaño natural, dentro de la página
+function insertRect(pw, ph){
+  const k = Math.min(1, (PW*IMG_INSERT_FRAC) / Math.max(pw, ph));
+  const w = pw*k, h = ph*k;
+  const cx = clamp((SW/2 - view.tx)/view.s, 0, PW), cy = clamp((SH/2 - view.ty)/view.s, 0, PH);
+  return { x: clamp(cx - w/2, 0, Math.max(0, PW - w)), y: clamp(cy - h/2, 0, Math.max(0, PH - h)), w, h };
+}
+function selectImg(o){ selection = { ids: new Set(), imgIds: new Set([o.id]), bb: [o.x, o.y, o.x + o.w, o.y + o.h], dx: 0, dy: 0, moving: false }; }
+async function insertImageFile(file){
+  if(!page) return null;
+  const pg = page;
+  let prep;
+  try { prep = await prepareImage(file); } catch(e){ toast('No se pudo abrir esa imagen.'); return null; }
+  const key = uid();
+  try { await backend.setImg(key, prep.blob); } catch(e){ toast('No se pudo guardar la imagen.'); return null; }
+  if(page !== pg) return null;   // se cambió de página mientras tanto: los píxeles los recogerá la limpieza
+  const o = Object.assign({ id: uid(), img: key }, insertRect(prep.w, prep.h));
+  const prevImgs = pageImgs(pg);
+  pg.imgs = [...prevImgs, o]; commitImgs(prevImgs);
+  await ensureImg(key);
+  setTool('lasso');
+  selectImg(o);
+  renderBg(); requestLive();
+  return o;
+}
+function pickImage(){ const f = $('#img-file'); f.value = ''; f.click(); }
+$('#img-file').onchange = e => { const f = e.target.files && e.target.files[0]; if(f) insertImageFile(f); };
 function drawBg(ctx, pg, hair){
   if(!pg || !pg.bg) return;
   const im = bgCache.get(pg.bg.img); if(!im) return;
@@ -1665,6 +1710,7 @@ async function editorMenu(){
     const papers = paperPicker(st, apply);
     b.append(label('Papel de este cuaderno'), papers, paperColorPicker(st, apply, papers));
     const l = document.createElement('div'); l.className = 'menu-list';
+    l.append(menuBtn(ICON.image, 'Insertar imagen', () => done('addimg')));
     l.append(menuBtn(ICON.pdfIn, 'Añadir PDF al final', () => done('addpdf')));
     l.append(menuBtn(ICON.pdf, 'Exportar el cuaderno en PDF', () => done('pdf')));
     l.append(menuBtn(ICON.image, 'Exportar esta página como imagen', () => done('png')));
@@ -1682,7 +1728,8 @@ async function editorMenu(){
       + '<li>El botón de la mano decide si el dedo escribe o solo mueve la página.</li>';
     b.append(label('Gestos'), help);
   }, actions: [{ label:'Listo', kind:'primary', value:null }] });
-  if(v === 'addpdf') pickPdf({ nb });
+  if(v === 'addimg') pickImage();
+  else if(v === 'addpdf') pickPdf({ nb });
   else if(v === 'pdf') exportPDF();
   else if(v === 'png') exportPNG();
   else if(v === 'delpage') deletePageAt(pageIdx);
