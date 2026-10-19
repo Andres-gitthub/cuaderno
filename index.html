@@ -2140,8 +2140,9 @@ async function collectImgGarbage(force){
   const used = new Set();
   try {
     for(const id of pageIds){
-      const doc = pages.has(id) ? pages.get(id) : await IDB.get('page:' + id);   // ausente = página vacía nunca guardada
-      for(const k of imgRefs(doc)) used.add(k);
+      const saved = await IDB.get('page:' + id);              // siempre lo guardado (ausente = página vacía nunca guardada); si falla, se aborta
+      for(const k of imgRefs(saved)) used.add(k);
+      for(const k of imgRefs(pages.get(id))) used.add(k);     // y también lo que hay en memoria
       if(changed()) return 0;
     }
   } catch(_){ return 0; }                                    // página ilegible: no arriesgar

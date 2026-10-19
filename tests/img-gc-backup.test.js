@@ -85,7 +85,7 @@ test('foco: si algo empieza a escribir durante la limpieza, se detiene', async (
 });
 
 test('una página en blanco nunca guardada no bloquea la limpieza', async () => {
-  await savedImgPage(); addPage(); closeNotebook(); await waitWrites();   // la página nueva no se ha escrito en IndexedDB
+  await savedImgPage(); addPage(); closeNotebook(); await waitWrites(); pages.clear();   // la página nueva no se ha escrito en IndexedDB
   await backend.setImg('korphan', await noiseJpeg());
   assertEq(await collectImgGarbage(true), 1);
 });
@@ -106,4 +106,13 @@ test('foco: cualquier escritura durante la limpieza la detiene', async () => {
   let r; try { r = await collectImgGarbage(true); } finally { IDB.get = orig; }
   assertEq(r, 0);
   assert(await backend.getImg('kz1'), 'no debía borrar');
+});
+
+test('foco: una página que no se pudo cargar (vacía en memoria) conserva sus imágenes guardadas', async () => {
+  const { o } = await savedImgPage(); closeNotebook(); await waitWrites();
+  const id = profile.notebooks[0].pages[0];
+  pages.set(id, { id, nb: profile.notebooks[0].id, strokes: [] });   // como deja loadPage tras un error de lectura
+  await backend.setImg('korphan', await noiseJpeg());
+  assertEq(await collectImgGarbage(true), 1);
+  assert(await backend.getImg(o.img) && await backend.getImg('kbg'), 'debía conservar las imágenes guardadas');
 });
