@@ -694,6 +694,36 @@ function insertRect(pw, ph){
   return { x: clamp(cx - w/2, 0, Math.max(0, PW - w)), y: clamp(cy - h/2, 0, Math.max(0, PH - h)), w, h };
 }
 function selectImg(o){ selection = { ids: new Set(), imgIds: new Set([o.id]), bb: [o.x, o.y, o.x + o.w, o.y + o.h], dx: 0, dy: 0, moving: false }; }
+const HANDLE_HIT = 22, IMG_MIN_SIDE = 40;   // radio para tocar un tirador (px de pantalla) y lado mínimo (unidades)
+function selImgIds(){ return (selection && selection.imgIds) || new Set(); }
+function imgAt(x, y){
+  const l = pageImgs(page);
+  for(let i = l.length - 1; i >= 0; i--){ const o = l[i]; if(x >= o.x && x <= o.x + o.w && y >= o.y && y <= o.y + o.h) return o; }
+  return null;
+}
+function soleImg(){
+  if(!selection || selection.ids.size || selImgIds().size !== 1) return null;
+  const id = [...selImgIds()][0];
+  return pageImgs(page).find(o => o.id === id) || null;
+}
+function imgCorners(o){ return [[o.x, o.y], [o.x + o.w, o.y], [o.x + o.w, o.y + o.h], [o.x, o.y + o.h]]; }
+function hitHandle(x, y){
+  const o = soleImg(); if(!o) return -1;
+  const c = imgCorners(o);
+  for(let i = 0; i < 4; i++) if(Math.hypot(x - c[i][0], y - c[i][1])*view.s <= HANDLE_HIT) return i;
+  return -1;
+}
+// Rectángulo al arrastrar la esquina h (0 arriba-izq, 1 arriba-der, 2 abajo-der, 3 abajo-izq) hasta (px, py):
+// la esquina opuesta queda fija, se mantienen las proporciones, lado mínimo IMG_MIN_SIDE; null si el centro saldría de la página
+function resizeRect(o, h, px, py){
+  const [ax, ay] = imgCorners(o)[(h + 2) % 4];
+  let s = Math.max(Math.abs(px - ax)/o.w, Math.abs(py - ay)/o.h);
+  s = Math.max(s, IMG_MIN_SIDE / Math.min(o.w, o.h));
+  const w = o.w*s, hh = o.h*s;
+  const r = { x: (h === 0 || h === 3) ? ax - w : ax, y: (h === 0 || h === 1) ? ay - hh : ay, w, h: hh };
+  const cx = r.x + w/2, cy = r.y + hh/2;
+  return (cx < 0 || cx > PW || cy < 0 || cy > PH) ? null : r;
+}
 async function insertImageFile(file){
   if(!page) return null;
   const pg = page;
@@ -779,16 +809,28 @@ function renderLive(){
   if(cur && cur.pts.length){ c.save(); clipPage(c); drawStroke(c, { t:cur.t, c:cur.c, w:cur.w, pts:cur.pts }); c.restore(); }
   if(selection){
     const { dx=0, dy=0 } = selection;
+    const rr = selection.rect;
     if(selection.moving){
-      c.save(); clipPage(c); c.translate(dx, dy);
-      for(const s of page.strokes) if(selection.ids.has(s.id)) drawStroke(c, s);
+      c.save(); clipPage(c);
+      if(rr){ const o = soleImg(), im = o && bgCache.get(o.img); if(im) c.drawImage(im, rr.x, rr.y, rr.w, rr.h); }
+      else {
+        c.translate(dx, dy);
+        const im = selImgIds();
+        for(const o of pageImgs(page)) if(im.has(o.id)){ const bm = bgCache.get(o.img); if(bm) c.drawImage(bm, o.x, o.y, o.w, o.h); }
+        for(const s of page.strokes) if(selection.ids.has(s.id)) drawStroke(c, s);
+      }
       c.restore();
     }
-    const b = selection.bb, pad = 6/view.s;
+    const b = rr ? [rr.x, rr.y, rr.x + rr.w, rr.y + rr.h] : selection.bb, pad = 6/view.s;
     c.strokeStyle = accent();
     c.lineWidth = 1.5/view.s; c.setLineDash([6/view.s, 5/view.s]);
     c.strokeRect(b[0]+dx-pad, b[1]+dy-pad, b[2]-b[0]+2*pad, b[3]-b[1]+2*pad);
     c.setLineDash([]);
+    const so = !selection.moving && soleImg();
+    if(so){
+      const hs = 10/view.s; c.fillStyle = '#FFFFFF'; c.lineWidth = 1.5/view.s;
+      for(const [hx, hy] of imgCorners(so)){ c.fillRect(hx - hs/2, hy - hs/2, hs, hs); c.strokeRect(hx - hs/2, hy - hs/2, hs, hs); }
+    }
   }
   if(lasso && lasso.length > 3){
     c.strokeStyle = '#2747C9'; c.lineWidth = 1.5/view.s; c.setLineDash([6/view.s, 5/view.s]);
@@ -974,6 +1016,8 @@ function onMove(e){
     requestLive();
   } else if(act.kind === 'move'){
     const [x,y] = toPage(e); selection.dx = x - act.x0; selection.dy = y - act.y0; requestLive();
+  } else if(act.kind === 'resize'){
+    const [x,y] = toPage(e); const r = resizeRect(act.orig, act.handle, x, y); if(r) selection.rect = r; requestLive();
   }
 }
 function onUp(e){
@@ -1002,12 +1046,24 @@ function startTool(e){
     clearSelection(); eraserPos = null; eraseTo(toPage(e)); requestLive();
   } else if(tool === 'lasso'){
     const [x,y] = toPage(e);
-    if(selection && inBB(selection.bb, x, y, 14/view.s)){
+    const h = hitHandle(x, y);
+    if(h >= 0){
+      const o = soleImg();
+      act = { kind:'resize', pid:e.pointerId, ptype:e.pointerType, handle:h, id:o.id, orig:Object.assign({}, o) };
+      selection.moving = true; selection.rect = { x:o.x, y:o.y, w:o.w, h:o.h }; renderBg(); requestLive();
+    } else if(selection && inBB(selection.bb, x, y, 14/view.s)){
       act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y };
-      selection.dx = 0; selection.dy = 0; selection.moving = true; renderInk(); requestLive();
+      selection.dx = 0; selection.dy = 0; selection.moving = true; renderBg(); renderInk(); requestLive();
     } else {
-      clearSelection();
-      act = { kind:'lasso', pid:e.pointerId, ptype:e.pointerType }; lasso = [x, y];
+      const o = imgAt(x, y);
+      if(o){
+        selectImg(o);
+        act = { kind:'move', pid:e.pointerId, ptype:e.pointerType, x0:x, y0:y };
+        selection.moving = true; renderBg(); renderInk(); requestLive();
+      } else {
+        clearSelection();
+        act = { kind:'lasso', pid:e.pointerId, ptype:e.pointerType }; lasso = [x, y];
+      }
     }
   }
 }
@@ -1212,25 +1268,42 @@ function finishAct(e){
           bb = bb ? [Math.min(bb[0],b[0]),Math.min(bb[1],b[1]),Math.max(bb[2],b[2]),Math.max(bb[3],b[3])] : b.slice();
         }
       }
-      if(ids.size) selection = { ids, bb, dx:0, dy:0, moving:false };
+      const imgIds = new Set();
+      for(const o of pageImgs(page)){
+        if(!pointInPoly(o.x + o.w/2, o.y + o.h/2, poly)) continue;
+        imgIds.add(o.id);
+        bb = bb ? [Math.min(bb[0],o.x),Math.min(bb[1],o.y),Math.max(bb[2],o.x+o.w),Math.max(bb[3],o.y+o.h)] : [o.x, o.y, o.x+o.w, o.y+o.h];
+      }
+      if(ids.size || imgIds.size) selection = { ids, imgIds, bb, dx:0, dy:0, moving:false };
     }
     requestLive();
   } else if(a.kind === 'move'){
     const { dx, dy } = selection; selection.moving = false;
     if(Math.abs(dx) + Math.abs(dy) > 0.3){
-      const prev = page.strokes;
-      page.strokes = prev.map(s => selection.ids.has(s.id) ? moved(s, dx, dy) : s);
+      const prevS = page.strokes, prevI = pageImgs(page), im = selImgIds();
+      page.strokes = prevS.map(s => selection.ids.has(s.id) ? moved(s, dx, dy) : s);
+      if(im.size) page.imgs = prevI.map(o => im.has(o.id) ? Object.assign({}, o, { x: o.x + dx, y: o.y + dy }) : o);
       selection.bb = [selection.bb[0]+dx, selection.bb[1]+dy, selection.bb[2]+dx, selection.bb[3]+dy];
-      commit(prev);
+      commit(prevS, prevI);
     }
     selection.dx = 0; selection.dy = 0;
-    renderInk(); requestLive();
+    renderBg(); renderInk(); requestLive();
+  } else if(a.kind === 'resize'){
+    const r = selection.rect, o = a.orig; selection.moving = false; selection.rect = null;
+    if(r && Math.abs(r.x - o.x) + Math.abs(r.y - o.y) + Math.abs(r.w - o.w) > 0.3){
+      const prevI = pageImgs(page);
+      page.imgs = prevI.map(x => x.id === a.id ? Object.assign({}, x, r) : x);
+      selection.bb = [r.x, r.y, r.x + r.w, r.y + r.h];
+      commitImgs(prevI);
+    }
+    renderBg(); renderInk(); requestLive();
   }
 }
 function abortAct(){
   if(!act) return;
   if(act.kind === 'erase' && page.strokes !== act.prev){ page.strokes = act.prev; renderInk(); }
-  if(act.kind === 'move' && selection){ selection.moving = false; selection.dx = selection.dy = 0; renderInk(); }
+  if(act.kind === 'move' && selection){ selection.moving = false; selection.dx = selection.dy = 0; renderBg(); renderInk(); }
+  if(act.kind === 'resize' && selection){ selection.moving = false; selection.rect = null; renderBg(); }
   act = null; cur = null; lasso = null; eraserPos = null; requestLive();
 }
 function clearSelection(){ if(selection){ selection = null; requestLive(); } }
@@ -1289,16 +1362,18 @@ stage.addEventListener('wheel', e => {
 $('#selmenu').addEventListener('pointerdown', e => e.stopPropagation());
 $('#selmenu').addEventListener('click', e => {
   const b = e.target.closest('button'); if(!b || !selection) return;
-  const prev = page.strokes;
+  const prevS = page.strokes, prevI = pageImgs(page), im = selImgIds();
   if(b.dataset.sel === 'del'){
-    page.strokes = prev.filter(s => !selection.ids.has(s.id)); selection = null;
+    page.strokes = prevS.filter(s => !selection.ids.has(s.id));
+    page.imgs = prevI.filter(o => !im.has(o.id)); selection = null;
   } else {
-    const copies = prev.filter(s => selection.ids.has(s.id)).map(s => { const c = moved(s, 24, 24); c.id = uid(); return c; });
-    page.strokes = prev.concat(copies);
+    const copies = prevS.filter(s => selection.ids.has(s.id)).map(s => { const c = moved(s, 24, 24); c.id = uid(); return c; });
+    const icopies = prevI.filter(o => im.has(o.id)).map(o => Object.assign({}, o, { id: uid(), x: o.x + 24, y: o.y + 24 }));
+    page.strokes = prevS.concat(copies); page.imgs = prevI.concat(icopies);
     const b0 = selection.bb;
-    selection = { ids:new Set(copies.map(c => c.id)), bb:[b0[0]+24,b0[1]+24,b0[2]+24,b0[3]+24], dx:0, dy:0, moving:false };
+    selection = { ids:new Set(copies.map(c => c.id)), imgIds:new Set(icopies.map(o => o.id)), bb:[b0[0]+24,b0[1]+24,b0[2]+24,b0[3]+24], dx:0, dy:0, moving:false };
   }
-  commit(prev); renderInk(); renderLive();
+  commit(prevS, prevI); renderBg(); renderInk(); renderLive();
 });
 
 /* =========================================================
