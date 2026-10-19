@@ -627,6 +627,7 @@ function renderPageCanvas(pg, n, width){
   x.setTransform(k,0,0,k,0,0);
   drawPaper(x, n, Math.max(0.9, 1/k));
   drawBg(x, pg, Math.max(0.9, 1/k));
+  drawImgs(x, pg);
   drawStrokes(x, pg ? pg.strokes : []);
   return c;
 }
@@ -640,22 +641,30 @@ async function decodeImg(blob){
   try { const im = new Image(); im.src = url; await im.decode(); return im; }
   finally { URL.revokeObjectURL(url); }
 }
-async function ensureBg(pg){
-  if(!pg || !pg.bg) return;
-  const id = pg.bg.img;
-  if(bgCache.has(id)){ const v = bgCache.get(id); bgCache.delete(id); bgCache.set(id, v); return; }
+// Asegura en caché la imagen `key`. Nunca expulsa ninguna imagen de la página abierta.
+async function ensureImg(key){
+  if(typeof key !== 'string') return;
+  if(bgCache.has(key)){ const v = bgCache.get(key); bgCache.delete(key); bgCache.set(key, v); return; }
   let blob = null;
-  try { blob = await backend.getImg(id); } catch(_){}
+  try { blob = await backend.getImg(key); } catch(_){}
   if(!blob) return;
   let im = null;
   try { im = await decodeImg(blob); } catch(_){ return; }
-  if(bgCache.has(id)){ if(im.close) im.close(); return; }
-  bgCache.set(id, im);
-  const keepId = page && page.bg && page.bg.img;
+  if(bgCache.has(key)){ if(im.close) im.close(); return; }
+  bgCache.set(key, im);
+  const keep = new Set(imgRefs(page));
   while(bgCache.size > BG_CACHE_MAX){
-    const k = [...bgCache.keys()].find(x => x !== keepId);
+    const k = [...bgCache.keys()].find(x => !keep.has(x));
     if(k === undefined) break;
     const v = bgCache.get(k); bgCache.delete(k); if(v && v.close) v.close();
+  }
+}
+async function ensureBg(pg){ if(pg && pg.bg) await ensureImg(pg.bg.img); }
+async function ensureImgs(pg){ for(const k of imgRefs(pg)) await ensureImg(k); }
+function drawImgs(ctx, pg, skip){
+  for(const o of pageImgs(pg)){
+    if(skip && skip.has(o.id)) continue;
+    const im = bgCache.get(o.img); if(im) ctx.drawImage(im, o.x, o.y, o.w, o.h);
   }
 }
 function drawBg(ctx, pg, hair){
@@ -705,7 +714,7 @@ function renderBg(){
   c.setTransform(dpr,0,0,dpr,0,0);
   c.save(); c.shadowColor = 'rgba(10,16,28,.28)'; c.shadowBlur = 18; c.shadowOffsetY = 3;
   c.fillStyle = paperColor(nb); c.fillRect(view.tx, view.ty, PW*view.s, PH*view.s); c.restore();
-  c.save(); pageTx(c); clipPage(c); drawPaper(c, nb, 1/view.s); drawBg(c, page, 1/view.s); c.restore();
+  c.save(); pageTx(c); clipPage(c); drawPaper(c, nb, 1/view.s); drawBg(c, page, 1/view.s); drawImgs(c, page, selection && selection.moving ? selection.imgIds : null); c.restore();
 }
 function renderInk(){
   const c = cInk;
@@ -1400,7 +1409,7 @@ async function goPage(i){
   if(tok !== loadTok || !nb) return;
   $('#stage-msg').hidden = true;
   page = pg; fitView(); requestRender(); updUndo();
-  if(pg.bg && !bgCache.has(pg.bg.img)) ensureBg(pg).then(() => { if(page === pg) requestRender(); });
+  if(imgRefs(pg).some(k => !bgCache.has(k))) ensureImgs(pg).then(() => { if(page === pg) requestRender(); });
 }
 function updPagebar(){
   $('#page-num').textContent = 'Página ' + (pageIdx + 1) + ' de ' + nb.pages.length;
@@ -1707,7 +1716,7 @@ async function pagesOverview(){
       for(const it of items){
         if(!$('#dlg').open) return;
         const pg = await loadPage(it.id, n.id);
-        await ensureBg(pg);
+        await ensureImgs(pg);
         const nc = renderPageCanvas(pg, n, 240);
         it.open.replaceChild(nc, it.c);
       }
@@ -1734,7 +1743,7 @@ async function saveFile(filename, data){
 }
 async function exportPNG(){
   if(!page) return;
-  await ensureBg(page);
+  await ensureImgs(page);
   const c = renderPageCanvas(page, nb, 2000);
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
   c.width = c.height = 0;
@@ -1749,7 +1758,7 @@ async function exportPDF(){
     const doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
     for(let i=0;i<n.pages.length;i++){
       const pg = await loadPage(n.pages[i], n.id);
-      await ensureBg(pg);
+      await ensureImgs(pg);
       const c = renderPageCanvas(pg, n, 1654);
       if(i > 0) doc.addPage('a4', 'portrait');
       doc.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
