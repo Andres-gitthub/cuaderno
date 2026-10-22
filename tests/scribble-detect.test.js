@@ -67,3 +67,27 @@ test('scribbleStats explica la decisión con los mismos resultados que isScribbl
   assertEq([m.ok, m.rev], [false, 0]);
   for(const P of [flat(zigzag(300, 300, 60, 20, 5)), flat(cursiveW(100, 100, 4)), flat([[10, 10]])]) assertEq(scribbleStats(P).ok, isScribble(P));
 });
+
+// «ll» de un solo trazo, 40 de alto: las letras suben y bajan, y la palabra avanza hacia la derecha
+const printLL = (x, y, gap = 10, h = 40) => densify([[x, y], [x, y+h], [x+gap, y], [x+gap, y+h]], 2);
+const cursiveLL = (x, y, h = 40) => densify([[x, y+h], [x+12, y+6], [x+10, y], [x+6, y+5], [x+6, y+h],
+  [x+18, y+6], [x+16, y], [x+12, y+5], [x+12, y+h], [x+20, y+h-8]], 2);
+
+test('una «ll» y otras letras que suben y bajan no son garabatos', async () => {
+  assert(!isScribble(flat(printLL(100, 100))), 'll de imprenta: ' + JSON.stringify(scribbleStats(flat(printLL(100, 100)))));
+  assert(!isScribble(flat(printLL(100, 100, 4))), 'll de imprenta muy junta');
+  assert(!isScribble(flat(cursiveLL(100, 100))), 'll en cursiva: ' + JSON.stringify(scribbleStats(flat(cursiveLL(100, 100)))));
+  assert(!isScribble(flat(densify([[100, 140], [100, 100], [115, 140], [130, 100], [130, 140]], 2))), 'M');
+  assert(!isScribble(flat(densify([[100, 100], [108, 140], [115, 110], [122, 140], [130, 100]], 2))), 'W');
+  // inclinada 20°, como al escribir rápido
+  const slant = printLL(100, 100).map(([x, y]) => [x + (140 - y)*0.36, y]);
+  assert(!isScribble(flat(slant)), 'll inclinada');
+});
+
+test('un garabato de arriba abajo necesita más pasadas', async () => {
+  const vert = passes => zigzag(300, 300, 120, 30, passes).map(([x, y]) => [y, x]);
+  assert(!isScribble(flat(vert(3))), 'vertical de 3 pasadas');
+  assert(isScribble(flat(vert(6))), 'vertical de 6 pasadas');
+  assertEq(scribbleStats(flat(vert(6))).minRev, 5);
+  assertEq(scribbleStats(flat(zigzag(300, 300, 120, 30, 3))).minRev, 2);
+});

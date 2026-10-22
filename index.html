@@ -1141,6 +1141,7 @@ function pointInPoly(x, y, poly){
    ========================================================= */
 const SCRIBBLE_MIN_PTS = 12;        // puntos mínimos del trazo
 const SCRIBBLE_MIN_REVERSALS = 2;   // cambios de sentido sobre el eje principal (3 pasadas)
+const SCRIBBLE_MIN_REVERSALS_UPRIGHT = 5; // … si va de arriba abajo, como las letras (ll, M, N…): 6 pasadas
 const SCRIBBLE_MIN_SWING = 8;       // retroceso mínimo para contar un cambio
 const SCRIBBLE_SWING_FRAC = 0.25;   // … o esta fracción de la extensión, si es mayor
 const SCRIBBLE_MIN_DENSITY = 2.5;   // longitud / diagonal de la caja
@@ -1162,9 +1163,11 @@ function principalAxis(P){
 }
 // Detector de garabatos con sus números (el modo ?diag los muestra). ok = es un garabato.
 function scribbleStats(P){
-  const n = P.length/3, st = { ok: false, n, rev: 0, extent: 0, swing: 0, density: 0 };
+  const n = P.length/3, st = { ok: false, n, rev: 0, minRev: SCRIBBLE_MIN_REVERSALS, extent: 0, swing: 0, density: 0 };
   if(n < SCRIBBLE_MIN_PTS) return st;
   const [ax, ay] = principalAxis(P);
+  // Al escribir, los trazos suben y bajan; al tachar, se va y se vuelve a lo largo del renglón
+  if(Math.abs(ay) > Math.abs(ax)) st.minRev = SCRIBBLE_MIN_REVERSALS_UPRIGHT;
   const proj = new Float64Array(n); let lo = Infinity, hi = -Infinity;
   for(let i=0;i<n;i++){ const t = P[i*3]*ax + P[i*3+1]*ay; proj[i] = t; if(t < lo) lo = t; if(t > hi) hi = t; }
   const extent = hi - lo; st.extent = extent;
@@ -1186,7 +1189,7 @@ function scribbleStats(P){
   st.rev = rev;
   const b = bboxOf(P, 0), diag = Math.hypot(b[2]-b[0], b[3]-b[1]);
   st.density = diag > 0 ? strokeLength(P) / diag : 0;
-  st.ok = rev >= SCRIBBLE_MIN_REVERSALS && diag > 0 && st.density >= SCRIBBLE_MIN_DENSITY;
+  st.ok = rev >= st.minRev && diag > 0 && st.density >= SCRIBBLE_MIN_DENSITY;
   return st;
 }
 function isScribble(P){ return scribbleStats(P).ok; }
@@ -1763,7 +1766,7 @@ function paperColorPicker(state, onChange, papers){
 }
 function label(t){ const d = document.createElement('div'); d.className = 'flabel'; d.textContent = t; return d; }
 async function newNotebookFlow(folderId){
-  const st = { title:'', cover:COVERS[profile.notebooks.length % COVERS.length][0], paper:'lined', paperColor:'white' };
+  const st = { title:'', cover:COVERS[profile.notebooks.length % COVERS.length][0], paper:'grid', paperColor:'white' };
   let inp;
   const v = await modal({ title:'Nuevo cuaderno', body: (b, done) => {
     inp = document.createElement('input'); inp.className = 'field'; inp.placeholder = 'Por ejemplo: Apuntes de Física'; inp.maxLength = 80;
@@ -2208,7 +2211,7 @@ function startDiag(){
   tryScribbleErase = function(c){
     const before = page ? page.strokes.length : 0, st = scribbleStats(c.pts), r = realTry(c);
     lastStroke = { t: c.t, stats: st, pts: Array.from(c.pts, v => Math.round(v*10)/10) };
-    scrib.textContent = 'garabato: ' + (st.ok ? 'sí' : 'no') + ' · cambios ' + st.rev + ' (mín ' + SCRIBBLE_MIN_REVERSALS + ')'
+    scrib.textContent = 'garabato: ' + (st.ok ? 'sí' : 'no') + ' · cambios ' + st.rev + ' (mín ' + st.minRev + ')'
       + ' · ancho ' + st.extent.toFixed(0) + ' · umbral ' + st.swing.toFixed(0) + ' · densidad ' + st.density.toFixed(2)
       + ' · borró ' + (r && page ? before - page.strokes.length : 0);
     return r;

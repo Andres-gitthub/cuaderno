@@ -12,7 +12,7 @@ Inserta fotos en las páginas y muévelas o cámbialas de tamaño con el lazo.
 2. En el repositorio, ve a **Settings → Pages**, elige **Deploy from a branch**, la rama `main` y la carpeta `/ (root)`.
 3. La app quedará en `https://TU-USUARIO.github.io/NOMBRE-DEL-REPO/`.
 
-Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v8` a `v9`). Así el iPad descarga la versión nueva.
+Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v9` a `v10`). Así el iPad descarga la versión nueva.
 
 ## Instalar en el iPad
 
