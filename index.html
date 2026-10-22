@@ -141,6 +141,12 @@ button.card{background:none;border:0;padding:0;text-align:left}
 :root[data-theme="dark"] .sw i{box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .sw i{box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}}
 .sz.on i{background:var(--accent)}
+.sizepop{position:fixed;z-index:6;width:240px;display:flex;flex-direction:column;gap:8px;background:var(--chrome);border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow)}
+.sizepop[hidden]{display:none}
+.sizepop .hd{display:flex;justify-content:space-between;font-size:13px;font-weight:600;color:var(--muted)}
+.sizepop .mm{color:var(--ink);font-variant-numeric:tabular-nums}
+.sizepop input{width:100%;margin:0;accent-color:var(--accent)}
+.sizepop canvas{width:100%;height:56px;display:block;border-radius:8px;background:#fff;box-shadow:0 0 0 1px var(--line) inset}
 .is-hidden{visibility:hidden;width:0;overflow:hidden;margin:0;padding:0}
 #editor .tb-tools.no-color .swatches, #editor .tb-tools.no-color .sep.s1{display:none}
 #editor .tb-tools.no-size .sizes, #editor .tb-tools.no-size .sep.s2{display:none}
@@ -269,6 +275,11 @@ dialog::backdrop{background:rgba(10,14,22,.45)}
       </div>
       <div class="stage-msg" id="stage-msg" hidden>Abriendo página…</div>
     </div>
+    <div class="sizepop" id="sizepop" hidden>
+      <div class="hd"><span id="sizepop-name"></span><span class="mm" id="sizepop-mm"></span></div>
+      <input type="range" id="sizepop-range" aria-label="Grosor">
+      <canvas id="sizepop-cv"></canvas>
+    </div>
     <footer class="pagebar">
       <button class="pill" id="btn-pages"></button>
       <span class="spacer"></span>
@@ -298,6 +309,8 @@ const HL_COLORS = ['#FFE14D','#9BEA8A','#FF9BC8','#8FD3FF','#FFB86B'];
 const HL_NAMES = ['Amarillo','Verde','Rosa','Azul','Naranja'];
 const SIZES = { pen:[1.6,2.8,4.6], hl:[12,20,30], eraser:[8,18,34] };
 const SIZE_NAMES = ['Fino','Medio','Grueso'];
+const WIDTH_RANGE = { pen:[1,8], hl:[8,38], eraser:[2.5,34] };   // lo que permite la barra de grosor
+const MM_PER_UNIT = 210/1000;                                    // la página es un A4 de 1000 unidades de ancho
 
 const S = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 const ICON = {
@@ -453,7 +466,10 @@ const dirty = new Map();   // id -> timer
 let nb = null, pageIdx = 0, page = null, loadTok = 0;
 let view = { s:1, tx:0, ty:0 };
 let selection = null;      // {ids:Set, imgIds:Set, bb:[...], dx, dy, moving, rect?}
-const ui = { tool:'pen', color:{ pen:PEN_COLORS[0], hl:HL_COLORS[0] }, size:{ pen:1, hl:1, eraser:1 } };
+const ui = { tool:'pen', color:{ pen:PEN_COLORS[0], hl:HL_COLORS[0] }, size:{ pen:1, hl:1, eraser:1 },
+  widths:{ pen:SIZES.pen.slice(), hl:SIZES.hl.slice(), eraser:SIZES.eraser.slice() } };
+// Grosor del botón elegido; en la goma es el radio
+function toolWidth(t){ return ui.widths[t][ui.size[t]]; }
 
 function defaultProfile(){ return { v:1, notebooks:[], folders:[], prefs:{} }; }
 function prefs(){ return profile.prefs; }
@@ -851,7 +867,7 @@ function renderLive(){
   if(eraserPos){
     c.strokeStyle = 'rgba(90,100,115,.9)'; c.lineWidth = 1.2/view.s;
     c.fillStyle = 'rgba(255,255,255,.35)';
-    c.beginPath(); c.arc(eraserPos[0], eraserPos[1], SIZES.eraser[ui.size.eraser], 0, Math.PI*2); c.fill(); c.stroke();
+    c.beginPath(); c.arc(eraserPos[0], eraserPos[1], toolWidth('eraser'), 0, Math.PI*2); c.fill(); c.stroke();
   }
   c.restore();
   positionSelMenu();
@@ -1022,7 +1038,11 @@ function onMove(e){
   if(act.pid !== e.pointerId) return;
   const list = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
   const evs = list.length ? list : [e];
-  if(act.kind === 'draw'){ for(const ev of evs) addPoint(ev, false); requestLive(); }
+  if(act.kind === 'draw'){
+    [act.ex, act.ey] = toPage(e);
+    if(cur.line) setLineEnd(act.ex, act.ey);
+    else { for(const ev of evs) addPoint(ev, false); watchHold(e); requestLive(); }
+  }
   else if(act.kind === 'erase'){ for(const ev of evs) eraseTo(toPage(ev)); requestLive(); }
   else if(act.kind === 'lasso'){
     for(const ev of evs){ const [x,y] = toPage(ev); const n = lasso.length; if(Math.hypot(x-lasso[n-2], y-lasso[n-1])*view.s > 2) lasso.push(x, y); }
@@ -1054,8 +1074,8 @@ function startTool(e){
   if(tool === 'pen' || tool === 'hl'){
     act = { kind:'draw', pid:e.pointerId, ptype:e.pointerType };
     const t = tool;
-    cur = { t, c:ui.color[t], w:SIZES[t][ui.size[t]], pts:[], lx:0, ly:0, lt:0, p:0.5, pmin:1, pmax:0, ptype:e.pointerType };
-    addPoint(e, true); requestLive();
+    cur = { t, c:ui.color[t], w:toolWidth(t), pts:[], lx:0, ly:0, lt:0, p:0.5, pmin:1, pmax:0, ptype:e.pointerType };
+    addPoint(e, true); [act.ex, act.ey] = toPage(e); watchHold(e); requestLive();
   } else if(tool === 'eraser'){
     act = { kind:'erase', pid:e.pointerId, ptype:e.pointerType, prev:page.strokes };
     clearSelection(); eraserPos = null; eraseTo(toPage(e)); requestLive();
@@ -1103,7 +1123,7 @@ function addPoint(ev, first){
   cur.pts.push(nx, ny, clamp(cur.p, 0.05, 1)); cur.lx = nx; cur.ly = ny; cur.lt = t;
 }
 function eraseTo(pt){
-  const r = SIZES.eraser[ui.size.eraser];
+  const r = toolWidth('eraser');
   const prev = eraserPos || pt;
   const steps = Math.max(1, Math.ceil(Math.hypot(pt[0]-prev[0], pt[1]-prev[1])/(r/2)));
   let strokes = page.strokes, changed = false;
@@ -1241,8 +1261,58 @@ function scribbleTargets(P, strokes){
   }
   return out;
 }
+/* =========================================================
+   Mantener quieto para enderezar: el trazo se cambia por una recta
+   ========================================================= */
+const HOLD_MS = 500;          // ms con el lápiz quieto
+const HOLD_SLOP = 4;          // px de pantalla que aún cuentan como quieto
+const LINE_MIN_LEN = 20;      // unidades de página: más corto no se endereza
+const LINE_TOL = 10;          // desviación máxima de la recta (≈ 2 mm) …
+const LINE_TOL_FRAC = 0.1;    // … o esta fracción del largo, si es mayor
+function isLineLike(P){
+  const n = P.length/3; if(n < 2) return false;
+  const x0 = P[0], y0 = P[1], x1 = P[(n-1)*3], y1 = P[(n-1)*3+1], len = Math.hypot(x1-x0, y1-y0);
+  if(len < LINE_MIN_LEN) return false;
+  const tol = Math.max(LINE_TOL, len*LINE_TOL_FRAC);
+  const ux = (x1-x0)/len, uy = (y1-y0)/len;
+  let far = 0;   // lo más lejos que ha llegado a lo largo de la recta; retroceder más de tol es ir y volver
+  for(let i=1;i<n-1;i++){
+    const x = P[i*3], y = P[i*3+1], t = (x-x0)*ux + (y-y0)*uy;
+    if(segDist(x, y, x0, y0, x1, y1) > tol || t < far - tol) return false;
+    if(t > far) far = t;
+  }
+  return true;
+}
+// Recta de (x0, y0) a (x1, y1) con presión constante, en puntos cada 4 unidades
+function linePts(x0, y0, x1, y1, p){
+  const k = Math.max(1, Math.ceil(Math.hypot(x1-x0, y1-y0)/4)), out = [];
+  for(let i=0;i<=k;i++) out.push(x0 + (x1-x0)*i/k, y0 + (y1-y0)*i/k, p);
+  return out;
+}
+let holdTimer = 0;
+function stopHold(){ clearTimeout(holdTimer); holdTimer = 0; }
+// Vuelve a contar el tiempo cada vez que el lápiz se aleja más de HOLD_SLOP del sitio donde se paró
+function watchHold(e){
+  const a = act;
+  if(!a || a.kind !== 'draw' || cur.line) return;
+  if(a.hx !== undefined && Math.hypot(e.clientX - a.hx, e.clientY - a.hy) <= HOLD_SLOP) return;
+  a.hx = e.clientX; a.hy = e.clientY;
+  stopHold();
+  holdTimer = setTimeout(() => {
+    holdTimer = 0;
+    if(act !== a || !cur || !isLineLike(cur.pts)) return;
+    const P = cur.pts, n = P.length/3;
+    let p = 0; for(let i=0;i<n;i++) p += P[i*3+2];
+    cur.line = { x0: P[0], y0: P[1], p: clamp(p/n, 0.05, 1) };
+    setLineEnd(a.ex, a.ey);
+  }, HOLD_MS);
+}
+function setLineEnd(x, y){
+  const L = cur.line;
+  cur.pts = linePts(L.x0, L.y0, x, y, L.p); requestLive();
+}
 function tryScribbleErase(c){
-  if(c.t !== 'pen' || prefs().scribbleErase === false) return false;
+  if(c.t !== 'pen' || c.line || prefs().scribbleErase === false) return false;
   if(!isScribble(c.pts)) return false;
   const targets = scribbleTargets(c.pts, page.strokes);
   if(!targets.size) return false;
@@ -1254,7 +1324,7 @@ function tryScribbleErase(c){
   return true;
 }
 function finishAct(e){
-  const a = act; act = null;
+  const a = act; act = null; stopHold();
   if(a.kind === 'draw'){
     if(cur.ptype === 'pen' && !prefs().hasPressure && cur.pmax - cur.pmin > 0.08){ prefs().hasPressure = true; saveProfileSoon(); }
     if(cur.pts.length){
@@ -1319,6 +1389,7 @@ function finishAct(e){
 }
 function abortAct(){
   if(!act) return;
+  stopHold();
   if(act.kind === 'erase' && page.strokes !== act.prev){ page.strokes = act.prev; renderInk(); }
   if(act.kind === 'move' && selection){ selection.moving = false; selection.dx = selection.dy = 0; renderBg(); renderInk(); }
   if(act.kind === 'resize' && selection){ selection.moving = false; selection.rect = null; renderBg(); }
@@ -1399,7 +1470,7 @@ $('#selmenu').addEventListener('click', e => {
    Barra de herramientas
    ========================================================= */
 function setTool(t, silent){
-  ui.tool = t;
+  ui.tool = t; closeSizePop();
   if(t !== 'lasso') clearSelection();
   eraserPos = null;
   for(const b of document.querySelectorAll('.tool')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
@@ -1447,12 +1518,60 @@ function renderSizes(){
   [0,1,2].forEach(i => {
     const b = document.createElement('button');
     b.className = 'sz' + (ui.size[key] === i ? ' on' : '');
-    const d = key === 'pen' ? [5,8,12][i] : key === 'hl' ? [8,12,17][i] : [7,12,18][i];
-    b.innerHTML = '<i style="width:'+d+'px;height:'+d+'px"></i>';
+    b.append(document.createElement('i')); sizeDot(b, key, ui.widths[key][i]);
     b.setAttribute('aria-label', 'Grosor ' + SIZE_NAMES[i].toLowerCase()); b.title = SIZE_NAMES[i];
-    b.onclick = () => { ui.size[key] = i; renderSizes(); savePrefsUi(); };
+    b.onclick = () => {
+      if(ui.size[key] === i){ $('#sizepop').hidden ? openSizePop(b) : closeSizePop(); return; }
+      closeSizePop(); ui.size[key] = i; renderSizes(); savePrefsUi();
+    };
     box.append(b);
   });
+}
+// Punto del botón, más o menos del tamaño del trazo
+function sizeDot(b, t, w){
+  const d = Math.round(clamp(t === 'pen' ? 3 + w*1.9 : t === 'hl' ? 4 + w*0.45 : 4 + w*0.42, 4, 22));
+  const i = b.querySelector('i'); i.style.width = i.style.height = d + 'px';
+}
+// Barra para afinar el grosor del botón elegido; la muestra se ve al zoom actual
+function openSizePop(btn){
+  const t = ui.tool, i = ui.size[t], [lo, hi] = WIDTH_RANGE[t], pop = $('#sizepop'), r = $('#sizepop-range');
+  r.min = lo; r.max = hi; r.step = 0.1; r.value = ui.widths[t][i];
+  $('#sizepop-name').textContent = 'Grosor ' + SIZE_NAMES[i].toLowerCase();
+  r.oninput = () => { ui.widths[t][i] = clamp(+r.value, lo, hi); sizeDot(btn, t, ui.widths[t][i]); drawSizePop(); };
+  r.onchange = () => savePrefsUi();
+  pop.hidden = false;
+  const br = btn.getBoundingClientRect();
+  pop.style.left = clamp(br.left + br.width/2 - pop.offsetWidth/2, 8, innerWidth - pop.offsetWidth - 8) + 'px';
+  pop.style.top = (br.bottom + 8) + 'px';
+  drawSizePop();
+}
+function closeSizePop(){ $('#sizepop').hidden = true; }
+function drawSizePop(){
+  const t = ui.tool, w = toolWidth(t), cv = $('#sizepop-cv');
+  const diam = t === 'eraser' ? w*2 : w;
+  $('#sizepop-mm').textContent = (diam*MM_PER_UNIT).toFixed(diam*MM_PER_UNIT < 1 ? 2 : 1).replace('.', ',') + ' mm';
+  const W = cv.clientWidth, H = cv.clientHeight; cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  const c = cv.getContext('2d'), s = view.s || 1;
+  c.setTransform(dpr*s, 0, 0, dpr*s, 0, 0); c.clearRect(0, 0, W/s, H/s);
+  if(t === 'eraser'){
+    c.beginPath(); c.arc(W/2/s, H/2/s, w, 0, Math.PI*2);
+    c.fillStyle = 'rgba(120,128,140,.15)'; c.fill(); c.strokeStyle = '#8A93A0'; c.lineWidth = 1/s; c.stroke();
+    return;
+  }
+  const P = [], x0 = 16/s, x1 = (W - 16)/s, my = H/2/s, amp = (H/2 - 12)/s;
+  for(let k=0;k<=40;k++){ const f = k/40; P.push(x0 + (x1-x0)*f, my - Math.sin(f*Math.PI*2)*amp*0.6, 0.6); }
+  drawStroke(c, makeStroke(t, ui.color[t], w, Float32Array.from(P)));
+}
+document.addEventListener('pointerdown', e => {
+  if(!$('#sizepop').hidden && !e.target.closest('#sizepop, #sizes')) closeSizePop();
+}, true);
+function applyUiPrefs(u){
+  if(u.color) Object.assign(ui.color, u.color);
+  if(u.size) Object.assign(ui.size, u.size);
+  for(const t of ['pen','hl','eraser']){
+    const w = u.widths && u.widths[t], [lo, hi] = WIDTH_RANGE[t];
+    ui.widths[t] = Array.isArray(w) && w.length === 3 && w.every(Number.isFinite) ? w.map(v => clamp(v, lo, hi)) : SIZES[t].slice();
+  }
 }
 function savePrefsUi(){
   if(!profile) return;
@@ -2184,8 +2303,7 @@ async function init(){
   if(profile.prefs.ui){
     const u = profile.prefs.ui;
     if(['pen','hl','eraser','lasso'].includes(u.tool)) ui.tool = u.tool;
-    if(u.color) Object.assign(ui.color, u.color);
-    if(u.size) Object.assign(ui.size, u.size);
+    applyUiPrefs(u);
   }
   setTool(ui.tool, true); updFingerBtn(); setStatus('saved');
   renderLibrary();

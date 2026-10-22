@@ -5,6 +5,7 @@ App para escribir a mano en el iPad con el Apple Pencil. Funciona sin conexión 
 Organiza los cuadernos en carpetas (una por asignatura) y tacha con la pluma encima de algo para borrarlo.
 Importa diapositivas en PDF y escribe encima.
 Inserta fotos en las páginas y muévelas o cámbialas de tamaño con el lazo.
+Mantén el lápiz quieto al final de un trazo para convertirlo en una línea recta, y toca otra vez el grosor elegido para afinarlo.
 
 ## Publicar en GitHub Pages
 
@@ -12,7 +13,7 @@ Inserta fotos en las páginas y muévelas o cámbialas de tamaño con el lazo.
 2. En el repositorio, ve a **Settings → Pages**, elige **Deploy from a branch**, la rama `main` y la carpeta `/ (root)`.
 3. La app quedará en `https://TU-USUARIO.github.io/NOMBRE-DEL-REPO/`.
 
-Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v9` a `v10`). Así el iPad descarga la versión nueva.
+Cuando publiques cambios, sube la constante `VERSION` de `sw.js` (por ejemplo, de `v10` a `v11`). Así el iPad descarga la versión nueva.
 
 ## Instalar en el iPad
 
